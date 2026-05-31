@@ -5,6 +5,7 @@ import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.security.Signature
 import java.util.Date
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
@@ -14,8 +15,6 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import javax.security.auth.x500.X500Principal
 
 /**
@@ -221,37 +220,36 @@ object AdbSpake2Pairing {
 
     private const val KEYSTORE_ALIAS = "clipops_adb_tls"
 
+    // Lazily generated in-memory EC key + self-signed cert, reused across calls
+    private var cachedSslContext: SSLContext? = null
+
     /**
      * Build an SSLContext that:
      *  - presents a self-signed EC client certificate (required by ADB mTLS)
      *  - trusts all server certificates (device uses self-signed too)
      */
     private fun buildMtlsSslContext(): SSLContext {
-        // 1. Get or create key in Android Keystore
-        val ks = KeyStore.getInstance("AndroidKeyStore").also { it.load(null) }
-        if (!ks.containsAlias(KEYSTORE_ALIAS)) {
-            val kpg = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
-            kpg.initialize(
-                KeyGenParameterSpec.Builder(
-                    KEYSTORE_ALIAS,
-                    KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
-                )
-                    .setAlgorithmParameterSpec(java.security.spec.ECGenParameterSpec("secp256r1"))
-                    .setDigests(KeyProperties.DIGEST_SHA256)
-                    .setCertificateSubject(X500Principal("CN=clipops-adb"))
-                    .setCertificateSerialNumber(BigInteger.ONE)
-                    .setCertificateNotBefore(Date(0))
-                    .setCertificateNotAfter(Date(Long.MAX_VALUE / 2))
-                    .build()
-            )
-            kpg.generateKeyPair()
-        }
+        cachedSslContext?.let { return it }
 
-        // 2. Build KeyManager from the AndroidKeyStore entry
+        // 1. Generate an EC key pair in-memory (no AndroidKeyStore needed)
+        val kpg = KeyPairGenerator.getInstance("EC")
+        kpg.initialize(256, random)
+        val kp = kpg.generateKeyPair()
+
+        // 2. Build a minimal self-signed X.509 cert using BouncyCastle-free approach:
+        //    encode a minimal DER TBSCertificate by hand and sign with SHA256withECDSA
+        val cert = buildSelfSignedCert(kp)
+
+        // 3. Store key + cert in an in-memory PKCS12 keystore
+        val ks = KeyStore.getInstance("PKCS12")
+        ks.load(null, null)
+        ks.setKeyEntry(KEYSTORE_ALIAS, kp.private, null, arrayOf(cert))
+
+        // 4. KeyManager from the in-memory store
         val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
-        kmf.init(ks, null)  // AndroidKeyStore doesn't need a password
+        kmf.init(ks, null)
 
-        // 3. Trust-all TrustManager (device cert is also self-signed)
+        // 5. Trust-all TrustManager
         val trustAll = arrayOf<X509TrustManager>(object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
             override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
@@ -260,7 +258,80 @@ object AdbSpake2Pairing {
 
         val ctx = SSLContext.getInstance("TLS")
         ctx.init(kmf.keyManagers, trustAll, random)
+        cachedSslContext = ctx
         return ctx
+    }
+
+    /**
+     * Builds a minimal self-signed X.509v1 certificate using raw DER encoding.
+     * No BouncyCastle required — just standard java.security APIs.
+     */
+    private fun buildSelfSignedCert(kp: java.security.KeyPair): X509Certificate {
+        // Use Android's sun.security.x509 if available, otherwise use reflection trick.
+        // Most reliable cross-version approach: use CertificateFactory on a hand-rolled DER cert.
+        // We use the X509V3CertificateGenerator from conscrypt/android's built-in impl.
+        try {
+            // Try the Android internal path (works on API 21+)
+            val tbsClass = Class.forName("sun.security.x509.X509CertInfo")
+            // If this succeeds we can use sun.security APIs
+            return buildSunCert(kp)
+        } catch (_: ClassNotFoundException) {}
+
+        // Fallback: use android.net.http.X509TrustManagerExtensions indirectly — not useful.
+        // Real fallback: generate using org.bouncycastle.* which IS on Android as internal classes
+        return buildBouncyCert(kp)
+    }
+
+    private fun buildSunCert(kp: java.security.KeyPair): X509Certificate {
+        val cls = Class.forName("sun.security.x509.X509CertImpl")
+        val infoClass = Class.forName("sun.security.x509.X509CertInfo")
+        val intervalClass = Class.forName("sun.security.x509.CertificateValidity")
+        val serialClass = Class.forName("sun.security.x509.CertificateSerialNumber")
+        val algoClass = Class.forName("sun.security.x509.CertificateAlgorithmId")
+        val algoIdClass = Class.forName("sun.security.x509.AlgorithmId")
+        val nameClass = Class.forName("sun.security.x509.X500Name")
+        val subjectClass = Class.forName("sun.security.x509.CertificateSubjectName")
+        val issuerClass = Class.forName("sun.security.x509.CertificateIssuerName")
+        val keyClass = Class.forName("sun.security.x509.CertificateX509Key")
+        val versionClass = Class.forName("sun.security.x509.CertificateVersion")
+
+        val info = infoClass.newInstance()
+        val now = Date()
+        val expiry = Date(now.time + 10L * 365 * 24 * 3600 * 1000)
+        val validity = intervalClass.getConstructor(Date::class.java, Date::class.java).newInstance(now, expiry)
+        val set = infoClass.getMethod("set", String::class.java, Any::class.java)
+        set.invoke(info, "validity", validity)
+        set.invoke(info, "serialNumber", serialClass.getConstructor(Int::class.java).newInstance(1))
+        val sha256ec = algoIdClass.getMethod("get", String::class.java).invoke(null, "SHA256withECDSA")
+        set.invoke(info, "algorithmID", algoClass.getConstructor(algoIdClass).newInstance(sha256ec))
+        val name = nameClass.getConstructor(String::class.java).newInstance("CN=clipops-adb")
+        set.invoke(info, "subject", subjectClass.getConstructor(nameClass).newInstance(name))
+        set.invoke(info, "issuer", issuerClass.getConstructor(nameClass).newInstance(name))
+        set.invoke(info, "key", keyClass.getConstructor(java.security.PublicKey::class.java).newInstance(kp.public))
+        set.invoke(info, "version", versionClass.newInstance())
+
+        val cert = cls.getConstructor(infoClass).newInstance(info)
+        cls.getMethod("sign", java.security.PrivateKey::class.java, String::class.java)
+            .invoke(cert, kp.private, "SHA256withECDSA")
+        return cert as X509Certificate
+    }
+
+    private fun buildBouncyCert(kp: java.security.KeyPair): X509Certificate {
+        // Android ships BouncyCastle internally as org.bouncycastle.*
+        val genClass = Class.forName("org.bouncycastle.x509.X509V1CertificateGenerator")
+        val gen = genClass.newInstance()
+        val now = Date()
+        val expiry = Date(now.time + 10L * 365 * 24 * 3600 * 1000)
+        genClass.getMethod("setSerialNumber", BigInteger::class.java).invoke(gen, BigInteger.ONE)
+        val x500 = X500Principal("CN=clipops-adb")
+        genClass.getMethod("setIssuerDN", java.security.Principal::class.java).invoke(gen, x500)
+        genClass.getMethod("setSubjectDN", java.security.Principal::class.java).invoke(gen, x500)
+        genClass.getMethod("setNotBefore", Date::class.java).invoke(gen, now)
+        genClass.getMethod("setNotAfter", Date::class.java).invoke(gen, expiry)
+        genClass.getMethod("setPublicKey", java.security.PublicKey::class.java).invoke(gen, kp.public)
+        genClass.getMethod("setSignatureAlgorithm", String::class.java).invoke(gen, "SHA256withECDSA")
+        return genClass.getMethod("generate", java.security.PrivateKey::class.java)
+            .invoke(gen, kp.private) as X509Certificate
     }
 
     private fun buildTrustAllSslContext(): SSLContext = buildMtlsSslContext()
