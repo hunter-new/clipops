@@ -42,8 +42,7 @@ dependencies {
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'androidx.recyclerview:recyclerview:1.3.2'
 
-    // ADB local connection & encryption dependency (AdbLib pure Kotlin/Java implementation)
-    implementation 'com.github.cgutman:adblib:1.1'
+    // AdbLib vendored directly (com.cgutman.adblib source in src/main/java)
 
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
