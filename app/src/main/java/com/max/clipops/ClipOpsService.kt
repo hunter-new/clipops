@@ -14,6 +14,9 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 
 class ClipOpsService : Service() {
 
@@ -263,7 +266,7 @@ class ClipOpsService : Service() {
                         return
                     }
 
-                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    GlobalScope.launch(Dispatchers.IO) {
                         val errMsg = AdbSpake2Pairing.pair(
                             host = host,
                             port = port,
