@@ -73,6 +73,12 @@ class ClipOpsService : Service() {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
+    // RemoteInput actions MUST use FLAG_MUTABLE (Android requirement)
+    private fun pbMutable(action: String, req: Int) = PendingIntent.getBroadcast(
+        this, req, Intent(action).setPackage(packageName),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+    )
+
     private fun openAppPI() = PendingIntent.getActivity(
         this, 0, Intent(this, MainActivity::class.java),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -137,7 +143,7 @@ class ClipOpsService : Service() {
                 .setLabel("Pairing code")
                 .build()
 
-            val submitIntent = pb(ACTION_SUBMIT_CODE, 55)
+            val submitIntent = pbMutable(ACTION_SUBMIT_CODE, 55)
             val enterCodeAction = NotificationCompat.Action.Builder(
                 0, "Enter pairing code", submitIntent
             ).addRemoteInput(remoteInput).build()
