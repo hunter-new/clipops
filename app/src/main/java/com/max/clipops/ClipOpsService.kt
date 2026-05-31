@@ -170,7 +170,9 @@ class ClipOpsService : Service() {
         val nsd = getSystemService(NsdManager::class.java).also { nsdManager = it }
 
         val listener = object : NsdManager.DiscoveryListener {
-            override fun onStartDiscoveryFailed(t: String, c: Int) { stopSearch() }
+            override fun onStartDiscoveryFailed(t: String, c: Int) {
+                handler.post { stopSearch() }
+            }
             override fun onStopDiscoveryFailed(t: String, c: Int)  {}
             override fun onDiscoveryStarted(t: String)             {}
             override fun onDiscoveryStopped(t: String)             {}
@@ -181,14 +183,16 @@ class ClipOpsService : Service() {
                         Log.w(TAG, "Resolve failed: $c")
                     }
                     override fun onServiceResolved(resolved: NsdServiceInfo) {
-                        discoveredPort = resolved.port
-                        Log.d(TAG, "Pairing service found on port $discoveredPort")
-                        getSharedPreferences("clipops", MODE_PRIVATE)
-                            .edit().putInt("pair_port", discoveredPort).apply()
-                        handler.removeCallbacks(timeoutRunnable)
-                        stopDiscoveryOnly()
-                        state = State.FOUND
-                        push()   // ← heads-up notification pops up here
+                        handler.post {
+                            discoveredPort = resolved.port
+                            Log.d(TAG, "Pairing service found on port $discoveredPort")
+                            getSharedPreferences("clipops", MODE_PRIVATE)
+                                .edit().putInt("pair_port", discoveredPort).apply()
+                            handler.removeCallbacks(timeoutRunnable)
+                            stopDiscoveryOnly()
+                            state = State.FOUND
+                            push()
+                        }
                     }
                 })
             }
