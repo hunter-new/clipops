@@ -5,7 +5,6 @@ import android.util.Log
 import com.cgutman.adblib.AdbBase64
 import com.cgutman.adblib.AdbConnection
 import com.cgutman.adblib.AdbCrypto
-import com.sengab.adbpairing.AdbPairingClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -20,8 +19,6 @@ object LocalAdbManager {
 
     private var crypto: AdbCrypto? = null
     private var connection: AdbConnection? = null
-
-    // ── Key management ───────────────────────────────────────────────────────
 
     fun initKeys(ctx: Context) {
         val privFile = File(ctx.filesDir, PRIV_KEY)
@@ -41,35 +38,17 @@ object LocalAdbManager {
         }
     }
 
-    // ── SPAKE2+ Pairing via JetBrains adblib ────────────────────────────────
-
-    fun pairDevice(
-        host: String,
-        pairPort: Int,
-        pairingCode: String,
-        onResult: (success: Boolean, message: String) -> Unit
-    ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val client = AdbPairingClient(host, pairPort, pairingCode)
-                val success = client.pair()
-                if (success) onResult(true, "Paired successfully")
-                else onResult(false, "Pairing rejected by device")
-            } catch (e: Exception) {
-                Log.e(TAG, "Pairing error", e)
-                onResult(false, e.message ?: "Unknown error")
-            }
-        }
-    }
-
-    // ── ADB Connect via vendored cgutman adblib ──────────────────────────────
-
+    /**
+     * Connect to ADB over TCP. On first connect the device will show
+     * "Allow wireless debugging?" — user taps Allow (Always).
+     * Subsequent connects are silent (key already trusted).
+     */
     fun connect(
         host: String,
         port: Int,
-        onResult: (success: Boolean) -> Unit
+        onResult: (success: Boolean, message: String) -> Unit
     ) {
-        val keys = crypto ?: return onResult(false)
+        val keys = crypto ?: return onResult(false, "Keys not initialised")
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 disconnect()
@@ -77,10 +56,10 @@ object LocalAdbManager {
                 val conn = AdbConnection.create(socket, keys)
                 conn.connect()
                 connection = conn
-                onResult(true)
+                onResult(true, "Connected")
             } catch (e: Exception) {
                 Log.e(TAG, "Connect error", e)
-                onResult(false)
+                onResult(false, e.message ?: "Connection failed")
             }
         }
     }
@@ -91,8 +70,6 @@ object LocalAdbManager {
     }
 
     fun isConnected(): Boolean = connection != null
-
-    // ── AppOps shell commands ────────────────────────────────────────────────
 
     fun setClipboardReadMode(packageName: String, isAllowed: Boolean, onResult: (Boolean) -> Unit) {
         val op = if (isAllowed) "allow" else "ignore"
