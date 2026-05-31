@@ -62,6 +62,16 @@ class MainActivity : AppCompatActivity() {
             setupAdbLauncher.launch(Intent(this, SetupAdbActivity::class.java))
         }
 
+        // Export debug log
+        binding.btnExportLog.setOnClickListener {
+            val intent = ClipOpsLogger.exportIntent(this)
+            if (intent != null) {
+                startActivity(Intent.createChooser(intent, "Share debug log"))
+            } else {
+                Toast.makeText(this, "No log file found", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         updateUIState()
         if (LocalAdbManager.isConnected()) {
             loadInstalledApps()

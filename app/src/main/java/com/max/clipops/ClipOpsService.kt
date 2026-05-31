@@ -175,6 +175,7 @@ class ClipOpsService : Service() {
                         handler.post {
                             discoveredPort = resolved.port
                             discoveredHost = resolved.host?.hostAddress ?: "127.0.0.1"
+                            ClipOpsLogger.log(this@ClipOpsService, "mDNS resolved: host=$discoveredHost port=$discoveredPort")
                             Log.d(TAG, "Pairing service found on port $discoveredPort")
                             getSharedPreferences("clipops", MODE_PRIVATE)
                                 .edit().putInt("pair_port", discoveredPort).apply()
@@ -218,6 +219,7 @@ class ClipOpsService : Service() {
                     startActivity(
                         Intent(this@ClipOpsService, PairingCodeActivity::class.java)
                             .putExtra("discovered_pair_port", discoveredPort)
+                            .putExtra("discovered_pair_host", discoveredHost)
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     )
                 }
@@ -225,6 +227,7 @@ class ClipOpsService : Service() {
                     val code = RemoteInput.getResultsFromIntent(intent)
                         ?.getCharSequence(KEY_PAIRING_CODE)?.toString()?.trim() ?: return
                     if (code.isEmpty()) return
+                    ClipOpsLogger.log(this@ClipOpsService, "SUBMIT_CODE: code=$code host=$discoveredHost port=$discoveredPort")
                     // Show "Connecting…" update on the notification
                     getSystemService(NotificationManager::class.java).notify(NOTIF_ID + 1,
                         NotificationCompat.Builder(this@ClipOpsService, CHANNEL_ALERT_ID)
@@ -235,7 +238,7 @@ class ClipOpsService : Service() {
                             .build()
                     )
                     LocalAdbManager.initKeys(this@ClipOpsService)
-                    LocalAdbManager.connect("127.0.0.1", discoveredPort) { success, msg ->
+                    LocalAdbManager.connect(discoveredHost.ifEmpty { "127.0.0.1" }, discoveredPort) { success, msg ->
                         if (success) {
                             state = State.CONNECTED
                             push()
@@ -275,6 +278,8 @@ class ClipOpsService : Service() {
             registerReceiver(receiver, filter)
         }
         state = if (LocalAdbManager.isConnected()) State.CONNECTED else State.IDLE
+        ClipOpsLogger.init(this)
+        ClipOpsLogger.log(this, "Service onCreate: initial state=$state")
         startForeground(NOTIF_ID, buildNotification())
     }
 

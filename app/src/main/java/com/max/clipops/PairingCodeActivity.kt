@@ -16,6 +16,9 @@ class PairingCodeActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         val port = intent.getIntExtra("discovered_pair_port", 0)
+        val host = intent.getStringExtra("discovered_pair_host") ?: "127.0.0.1"
+
+        ClipOpsLogger.log(this, "PairingCodeActivity: opened with host=$host port=$port")
 
         // Build inline input layout
         val container = LinearLayout(this).apply {
@@ -58,8 +61,10 @@ class PairingCodeActivity : Activity() {
                     finish()
                     return@setPositiveButton
                 }
+                ClipOpsLogger.log(this, "PairingCodeActivity: connecting host=$host port=$resolvedPort code=$code")
                 LocalAdbManager.initKeys(this)
-                LocalAdbManager.connect("127.0.0.1", resolvedPort) { success, msg ->
+                LocalAdbManager.connect(host, resolvedPort) { success, msg ->
+                    ClipOpsLogger.log(this, "PairingCodeActivity: result success=$success msg=$msg")
                     runOnUiThread {
                         if (success) {
                             Toast.makeText(this, "Connected!", Toast.LENGTH_SHORT).show()

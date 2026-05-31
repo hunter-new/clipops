@@ -19,20 +19,28 @@ object LocalAdbManager {
 
     private var crypto: AdbCrypto? = null
     private var connection: AdbConnection? = null
+    private var appContext: Context? = null
 
     fun initKeys(ctx: Context) {
+        appContext = ctx.applicationContext
+        ClipOpsLogger.init(ctx)
         val privFile = File(ctx.filesDir, PRIV_KEY)
         val pubFile  = File(ctx.filesDir, PUB_KEY)
+        ClipOpsLogger.log(ctx, "initKeys: privExists=${privFile.exists()} pubExists=${pubFile.exists()}")
         val base64 = AdbBase64 { data -> Base64.getEncoder().encodeToString(data) }
         crypto = try {
             if (privFile.exists() && pubFile.exists()) {
-                AdbCrypto.loadAdbKeyPair(base64, privFile, pubFile)
+                AdbCrypto.loadAdbKeyPair(base64, privFile, pubFile).also {
+                    ClipOpsLogger.log(ctx, "initKeys: loaded existing key pair")
+                }
             } else {
                 AdbCrypto.generateAdbKeyPair(base64).also {
                     it.saveAdbKeyPair(privFile, pubFile)
+                    ClipOpsLogger.log(ctx, "initKeys: generated new key pair")
                 }
             }
         } catch (e: Exception) {
+            ClipOpsLogger.log(ctx, "initKeys: FAILED ${e.message}", "E")
             Log.e(TAG, "Key init failed", e)
             null
         }
@@ -48,16 +56,26 @@ object LocalAdbManager {
         port: Int,
         onResult: (success: Boolean, message: String) -> Unit
     ) {
-        val keys = crypto ?: return onResult(false, "Keys not initialised")
+        val ctx = appContext
+        val keys = crypto ?: run {
+            ctx?.let { ClipOpsLogger.log(it, "connect: keys not initialised", "E") }
+            return onResult(false, "Keys not initialised")
+        }
+        ctx?.let { ClipOpsLogger.log(it, "connect: attempting $host:$port") }
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 disconnect()
+                ctx?.let { ClipOpsLogger.log(it, "connect: opening socket to $host:$port") }
                 val socket = Socket(host, port)
+                ctx?.let { ClipOpsLogger.log(it, "connect: socket opened, creating AdbConnection") }
                 val conn = AdbConnection.create(socket, keys)
+                ctx?.let { ClipOpsLogger.log(it, "connect: calling conn.connect() — waiting for auth/approval") }
                 conn.connect()
                 connection = conn
+                ctx?.let { ClipOpsLogger.log(it, "connect: SUCCESS $host:$port") }
                 onResult(true, "Connected")
             } catch (e: Exception) {
+                ctx?.let { ClipOpsLogger.log(it, "connect: FAILED $host:$port — ${e::class.simpleName}: ${e.message}", "E") }
                 Log.e(TAG, "Connect error", e)
                 onResult(false, e.message ?: "Connection failed")
             }
