@@ -69,14 +69,21 @@ object AdbSpake2Pairing {
             tlsSock.startHandshake()
             log("TLS handshake done")
 
+            val exportedKeyingMaterial = exportKeyingMaterialReflective(tlsSock, "adb-label", null, 64)
+            if (exportedKeyingMaterial != null) {
+                log("Exported TLS keying material (${exportedKeyingMaterial.size} bytes)")
+            } else {
+                log("Failed to export keying material, or Conscrypt not available")
+            }
+
             val inp = tlsSock.inputStream
             val out = tlsSock.outputStream
 
             // ── SPAKE2 using Ed25519 (BoringSSL SPAKE2 variant) ───────────────────
 
-            // Step 1: derive password scalar w from 6-digit code
-            val w = codeToScalar(pairingCode)
-            log("w derived from code")
+            // Step 1: derive password scalar w from 6-digit code and exported keying material
+            val w = codeToScalar(pairingCode, exportedKeyingMaterial)
+            log("w derived from code and exported keying material")
 
             // Step 2: ephemeral scalar x
             val x = randomScalar()
@@ -115,12 +122,15 @@ object AdbSpake2Pairing {
             log("sharedKey derived: ${sharedKey.hex()}")
 
             // Step 7: send AES-GCM encrypted RSA pub key
-            val info = "pairing_connection\u0000".toByteArray(Charsets.UTF_8)
-        val derivedKeyMaterial = hkdfSHA256(sharedKey, null, info, 32)
-        val derivedKey = derivedKeyMaterial.sliceArray(0 until 16)
-        val derivedIv = derivedKeyMaterial.sliceArray(16 until 28)
+            val aesKey = hkdfSHA256(
+                sharedKey,
+                null,
+                "adb pairing_auth aes-128-gcm key".toByteArray(Charsets.UTF_8),
+                16
+            )
+            log("Derived AES key: ${aesKey.hex()}")
 
-        val encrypted = aesGcmEncrypt(derivedKey, derivedIv, rsaPubKeyPayload)
+            val encrypted = aesGcmEncrypt(aesKey, ByteArray(12), rsaPubKeyPayload)
             sendFrame(out, TYPE_CERTIFICATE, encrypted)
             log("sent encrypted pubkey (${encrypted.size} bytes)")
 
@@ -128,11 +138,7 @@ object AdbSpake2Pairing {
             val (_, devEncrypted) = recvFrame(inp)
             log("received device payload (${devEncrypted.size} bytes)")
             val decryptedPayload = try {
-                val info = "pairing_connection\u0000".toByteArray(Charsets.UTF_8)
-                val derivedKeyMaterial = hkdfSHA256(sharedKey, null, info, 32)
-                val derivedKey = derivedKeyMaterial.sliceArray(0 until 16)
-                val derivedIv = derivedKeyMaterial.sliceArray(16 until 28)
-                aesGcmDecrypt(derivedKey, derivedIv, devEncrypted)
+                aesGcmDecrypt(aesKey, ByteArray(12), devEncrypted)
             } catch (e: Exception) {
                 log("SPAKE2: aesGcmDecrypt with HKDF failed: ${e.message}. Trying legacy decryption with zeros...")
                 aesGcmDecrypt(sharedKey, ByteArray(12).also { it[11] = 1 }, devEncrypted)
@@ -146,9 +152,12 @@ object AdbSpake2Pairing {
         }
     }
 
-    private fun codeToScalar(code: String): BigInteger {
+    private fun codeToScalar(code: String, exportedKeyingMaterial: ByteArray?): BigInteger {
         val sha = MessageDigest.getInstance("SHA-256")
         sha.update(code.toByteArray(Charsets.UTF_8))
+        if (exportedKeyingMaterial != null) {
+            sha.update(exportedKeyingMaterial)
+        }
         return BigInteger(1, sha.digest()).mod(Ed25519.ORDER)
     }
 
@@ -191,6 +200,22 @@ object AdbSpake2Pairing {
             val n = read(buf, off, buf.size - off)
             if (n < 0) throw java.io.EOFException("EOF after $off/${buf.size} bytes")
             off += n
+        }
+    }
+
+    private fun exportKeyingMaterialReflective(socket: javax.net.ssl.SSLSocket, label: String, context: ByteArray?, length: Int): ByteArray? {
+        return try {
+            val conscryptClass = Class.forName("org.conscrypt.Conscrypt")
+            val method = conscryptClass.getMethod(
+                "exportKeyingMaterial",
+                javax.net.ssl.SSLSocket::class.java,
+                String::class.java,
+                ByteArray::class.java,
+                Int::class.javaPrimitiveType
+            )
+            method.invoke(null, socket, label, context, length) as ByteArray
+        } catch (e: Exception) {
+            null
         }
     }
 
