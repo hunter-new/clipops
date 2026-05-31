@@ -61,10 +61,9 @@ object AdbSpake2Pairing {
     ): String {
         return try {
             val sslCtx = buildTrustAllSslContext()
-            // Plain socket first with connect timeout, then layer TLS on top
             val plainSock = java.net.Socket()
             plainSock.connect(java.net.InetSocketAddress(host, port), 10_000)
-            plainSock.soTimeout = 15_000   // read timeout for all subsequent ops
+            plainSock.soTimeout = 15_000
             val sock = sslCtx.socketFactory.createSocket(plainSock, host, port, true)
             val tlsSock = sock as javax.net.ssl.SSLSocket
             tlsSock.startHandshake()
@@ -73,35 +72,37 @@ object AdbSpake2Pairing {
             val inp = tlsSock.inputStream
             val out = tlsSock.outputStream
 
-            // ── Step 1: password scalar w from code ──────────────────────────────
+            // ── SPAKE2 using Ed25519 (BoringSSL SPAKE2 variant) ───────────────────
+
+            // Step 1: derive password scalar w from 6-digit code
             val w = codeToScalar(pairingCode)
             log("w derived from code")
 
-            // ── Step 2: generate ephemeral scalar x ──────────────────────────────
+            // Step 2: ephemeral scalar x
             val x = randomScalar()
 
-            // ── Step 3: compute and send client message X_msg = x*G + w*M ────────
-            val xG    = P256.mul(x, P256.G)
-            val wM    = P256.mul(w, P256.M)
-            val xMsg  = P256.add(xG, wM)
-            val xBytes = P256.encodeUncompressed(xMsg)   // 65 bytes
+            // Step 3: X_msg = x*G + w*M  (client role, 32-byte compressed)
+            val xG   = Ed25519.mul(x, Ed25519.G)
+            val wM   = Ed25519.mul(w, Ed25519.M)
+            val xMsg = Ed25519.add(xG, wM)
+            val xBytes = Ed25519.compress(xMsg)
             sendFrame(out, TYPE_SPAKE2_MSG, xBytes)
             log("sent X_msg (${xBytes.size} bytes)")
 
-            // ── Step 4: read server message Y_msg ─────────────────────────────────
+            // Step 4: receive Y_msg (32 bytes)
             val (_, yBytes) = recvFrame(inp)
-            require(yBytes.size == 65) { "Expected 65-byte Y_msg, got ${yBytes.size}" }
+            require(yBytes.size == 32) { "Expected 32-byte Y_msg, got ${yBytes.size}" }
             log("received Y_msg (${yBytes.size} bytes)")
-            val yMsg = P256.decodePoint(yBytes)
+            val yMsg = Ed25519.decompressPoint(yBytes)
 
-            // ── Step 5: compute shared point K = x*(Y_msg - w*N) ─────────────────
-            val wN = P256.mul(w, P256.Npoint)
-            val wNneg = P256.ECPoint(wN.x, (P256.P - wN.y).mod(P256.P))
-            val kPoint = P256.mul(x, P256.add(yMsg, wNneg))
-            val kBytes = P256.encodeUncompressed(kPoint)
+            // Step 5: K = x * (Y_msg - w*N)
+            val wN    = Ed25519.mul(w, Ed25519.N)
+            val wNneg = Ed25519.neg(wN)
+            val kPoint = Ed25519.mul(x, Ed25519.add(yMsg, wNneg))
+            val kBytes = Ed25519.compress(kPoint)
             log("K computed")
 
-            // ── Step 6: derive shared key via SHA-256 transcript ──────────────────
+            // Step 6: derive shared key via SHA-256 transcript
             val context = "ADB PAIR_SETUP SPAKE2\u0000".toByteArray(Charsets.UTF_8)
             val sha = MessageDigest.getInstance("SHA-256")
             sha.update(intToLE(context.size))
@@ -110,45 +111,37 @@ object AdbSpake2Pairing {
             sha.update(yBytes)
             sha.update(kBytes)
             sha.update(w.toByteArray32())
-            val sharedKey = sha.digest()    // 32 bytes
+            val sharedKey = sha.digest()
             log("sharedKey derived: ${sharedKey.hex()}")
 
-            // ── Step 7: encrypt our RSA public key and send ───────────────────────
+            // Step 7: send AES-GCM encrypted RSA pub key
             val encrypted = aesGcmEncrypt(sharedKey, ByteArray(12), rsaPubKeyPayload)
             sendFrame(out, TYPE_CERTIFICATE, encrypted)
             log("sent encrypted pubkey (${encrypted.size} bytes)")
 
-            // ── Step 8: receive device's encrypted payload ────────────────────────
+            // Step 8: receive device encrypted payload
             val (_, devEncrypted) = recvFrame(inp)
             log("received device payload (${devEncrypted.size} bytes)")
             aesGcmDecrypt(sharedKey, ByteArray(12).also { it[11] = 1 }, devEncrypted)
             log("pairing SUCCESS")
 
-            tlsSock.close()
-            ""   // success
+            ""
         } catch (e: Exception) {
             log("pairing FAILED: ${e::class.simpleName}: ${e.message}")
-            e.message ?: "Unknown error"
+            e.message ?: e::class.simpleName ?: "Unknown error"
         }
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────────
-
     private fun codeToScalar(code: String): BigInteger {
-        // ADB uses SHA-256 of the code bytes as password, then interprets mod N
         val sha = MessageDigest.getInstance("SHA-256")
-        val hash = sha.digest(code.toByteArray(Charsets.UTF_8))
-        return BigInteger(1, hash).mod(P256.N)
+        sha.update(code.toByteArray(Charsets.UTF_8))
+        return BigInteger(1, sha.digest()).mod(Ed25519.ORDER)
     }
 
     private fun randomScalar(): BigInteger {
-        var k: BigInteger
-        do {
-            val bytes = ByteArray(32)
-            random.nextBytes(bytes)
-            k = BigInteger(1, bytes).mod(P256.N)
-        } while (k == BigInteger.ZERO)
-        return k
+        val bytes = ByteArray(64)
+        random.nextBytes(bytes)
+        return BigInteger(1, bytes).mod(Ed25519.ORDER)
     }
 
     // ADB pairing packet header: 1 byte version + 1 byte type + 4 bytes payload size (BE)
