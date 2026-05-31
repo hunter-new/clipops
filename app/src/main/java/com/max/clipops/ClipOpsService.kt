@@ -36,6 +36,7 @@ class ClipOpsService : Service() {
 
     private var state = State.IDLE
     private var discoveredPort = 0
+    private var discoveredHost = ""
     private var nsdManager: NsdManager? = null
     private var discoveryListener: NsdManager.DiscoveryListener? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -120,7 +121,7 @@ class ClipOpsService : Service() {
                 ).addRemoteInput(remoteInput).build()
 
                 b.setContentTitle("Pairing service found")
-                b.setContentText(null)
+                b.setContentText("$discoveredHost : $discoveredPort")
                 b.addAction(enterCodeAction)
                 b.addAction(0, "Stop searching", pb(ACTION_STOP_SEARCH, 2))
             }
@@ -173,6 +174,7 @@ class ClipOpsService : Service() {
                     override fun onServiceResolved(resolved: NsdServiceInfo) {
                         handler.post {
                             discoveredPort = resolved.port
+                            discoveredHost = resolved.host?.hostAddress ?: "127.0.0.1"
                             Log.d(TAG, "Pairing service found on port $discoveredPort")
                             getSharedPreferences("clipops", MODE_PRIVATE)
                                 .edit().putInt("pair_port", discoveredPort).apply()
