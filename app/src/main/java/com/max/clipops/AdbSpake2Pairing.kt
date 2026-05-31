@@ -134,7 +134,7 @@ object AdbSpake2Pairing {
                 val derivedIv = derivedKeyMaterial.sliceArray(16 until 28)
                 aesGcmDecrypt(derivedKey, derivedIv, devEncrypted)
             } catch (e: Exception) {
-                log("SPAKE2: aesGcmDecrypt with HKDF failed: ${e.message}. Trying legacy decryption with zeros...", e)
+                log("SPAKE2: aesGcmDecrypt with HKDF failed: ${e.message}. Trying legacy decryption with zeros...")
                 aesGcmDecrypt(sharedKey, ByteArray(12).also { it[11] = 1 }, devEncrypted)
             }
             log("pairing SUCCESS")
