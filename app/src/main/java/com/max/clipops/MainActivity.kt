@@ -39,7 +39,6 @@ class MainActivity : AppCompatActivity() {
         setupSearch()
 
         binding.statusBanner.setOnClickListener {
-            val intent = Intent(this, SetupAdbActivity::class.onResume().javaClass) // fallback / target
             setupAdbLauncher.launch(Intent(this, SetupAdbActivity::class.java))
         }
 
