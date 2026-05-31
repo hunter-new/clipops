@@ -2,6 +2,7 @@ package com.max.clipops
 
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -43,6 +44,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         LocalAdbManager.initKeys(this)
+
+        // Start persistent notification service (like Shizuku)
+        val svcIntent = Intent(this, ClipOpsService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(svcIntent)
+        } else {
+            startService(svcIntent)
+        }
+
         updateUIState()
         if (LocalAdbManager.isConnected()) {
             loadInstalledApps()
