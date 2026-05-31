@@ -89,6 +89,13 @@ object LocalAdbManager {
 
     fun isConnected(): Boolean = connection != null
 
+    /** Returns the loaded AdbCrypto, initialising keys first if needed. */
+    fun getCrypto(ctx: Context): AdbCrypto {
+        crypto?.let { return it }
+        initKeys(ctx)
+        return crypto ?: throw IllegalStateException("Key initialisation failed")
+    }
+
     fun setClipboardReadMode(packageName: String, isAllowed: Boolean, onResult: (Boolean) -> Unit) {
         val op = if (isAllowed) "allow" else "ignore"
         runShellCommand("cmd appops set $packageName READ_CLIPBOARD $op") { success, _ ->

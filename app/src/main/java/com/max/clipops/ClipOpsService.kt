@@ -224,31 +224,71 @@ class ClipOpsService : Service() {
                     )
                 }
                 ACTION_SUBMIT_CODE  -> {
-                    val code = RemoteInput.getResultsFromIntent(intent)
+                    val raw = RemoteInput.getResultsFromIntent(intent)
                         ?.getCharSequence(KEY_PAIRING_CODE)?.toString()?.trim() ?: return
-                    if (code.isEmpty()) return
-                    ClipOpsLogger.log(this@ClipOpsService, "SUBMIT_CODE: code=$code host=$discoveredHost port=$discoveredPort")
-                    // Show "Connecting…" update on the notification
+                    if (raw.isEmpty()) return
+                    // Support "CODE PORT" typed in same field
+                    val parts = raw.split("\\s+".toRegex())
+                    val code = parts[0]
+                    val inputPort = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                    val resolvedPort = if (inputPort > 0) inputPort else discoveredPort
+                    ClipOpsLogger.log(this@ClipOpsService, "SUBMIT_CODE: code=$code host=$discoveredHost port=$resolvedPort")
+
                     getSystemService(NotificationManager::class.java).notify(NOTIF_ID + 1,
                         NotificationCompat.Builder(this@ClipOpsService, CHANNEL_ALERT_ID)
                             .setSmallIcon(android.R.drawable.ic_dialog_info)
-                            .setContentTitle("Connecting…")
+                            .setContentTitle("Pairing…")
+                            .setContentText("Running SPAKE2+ handshake on $discoveredHost:$resolvedPort")
                             .setProgress(0, 0, true)
                             .setOngoing(true)
                             .build()
                     )
-                    LocalAdbManager.initKeys(this@ClipOpsService)
-                    LocalAdbManager.connect(discoveredHost.ifEmpty { "127.0.0.1" }, discoveredPort) { success, msg ->
-                        if (success) {
-                            state = State.CONNECTED
-                            push()
-                        } else {
-                            // Show error back in notification
-                            getSystemService(NotificationManager::class.java).notify(NOTIF_ID + 1,
-                                NotificationCompat.Builder(this@ClipOpsService, CHANNEL_ALERT_ID)
+
+                    val svc = this@ClipOpsService
+                    val host = discoveredHost.ifEmpty { "127.0.0.1" }
+                    val port = resolvedPort
+
+                    // Load RSA key pair for our public key payload
+                    val crypto = try {
+                        LocalAdbManager.getCrypto(svc)
+                    } catch (e: Exception) {
+                        ClipOpsLogger.log(svc, "SUBMIT_CODE: key load failed: ${e.message}", "E")
+                        return
+                    }
+                    val pubKeyPayload = try {
+                        crypto.adbPublicKeyPayload
+                    } catch (e: Exception) {
+                        ClipOpsLogger.log(svc, "SUBMIT_CODE: pubkey encode failed: ${e.message}", "E")
+                        return
+                    }
+
+                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val errMsg = AdbSpake2Pairing.pair(
+                            host = host,
+                            port = port,
+                            pairingCode = code,
+                            rsaPubKeyPayload = pubKeyPayload
+                        ) { msg -> ClipOpsLogger.log(svc, "SPAKE2: $msg") }
+
+                        val nm = getSystemService(NotificationManager::class.java)
+                        nm.cancel(NOTIF_ID + 1)
+                        if (errMsg.isEmpty()) {
+                            ClipOpsLogger.log(svc, "SUBMIT_CODE: pairing SUCCESS")
+                            nm.notify(NOTIF_ID + 1,
+                                NotificationCompat.Builder(svc, CHANNEL_ALERT_ID)
                                     .setSmallIcon(android.R.drawable.ic_dialog_info)
-                                    .setContentTitle("Connection failed")
-                                    .setContentText(msg)
+                                    .setContentTitle("Paired!")
+                                    .setContentText("Now tap 'Search' to connect.")
+                                    .setAutoCancel(true)
+                                    .build()
+                            )
+                        } else {
+                            ClipOpsLogger.log(svc, "SUBMIT_CODE: pairing FAILED: $errMsg", "E")
+                            nm.notify(NOTIF_ID + 1,
+                                NotificationCompat.Builder(svc, CHANNEL_ALERT_ID)
+                                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                                    .setContentTitle("Pairing failed")
+                                    .setContentText(errMsg)
                                     .setAutoCancel(true)
                                     .build()
                             )
