@@ -80,17 +80,17 @@ object AdbSpake2Pairing {
             val wM    = P256.mul(w, P256.M)
             val xMsg  = P256.add(xG, wM)
             val xBytes = P256.encodeUncompressed(xMsg)   // 65 bytes
-            sendFrame(out, xBytes)
+            sendFrame(out, TYPE_SPAKE2_MSG, xBytes)
             log("sent X_msg (${xBytes.size} bytes)")
 
             // ── Step 4: read server message Y_msg ─────────────────────────────────
-            val yBytes = recvFrame(inp, 65)
+            val (_, yBytes) = recvFrame(inp)
+            require(yBytes.size == 65) { "Expected 65-byte Y_msg, got ${yBytes.size}" }
             log("received Y_msg (${yBytes.size} bytes)")
             val yMsg = P256.decodePoint(yBytes)
 
             // ── Step 5: compute shared point K = x*(Y_msg - w*N) ─────────────────
             val wN = P256.mul(w, P256.Npoint)
-            // negate wN: (x, -y mod P)
             val wNneg = P256.ECPoint(wN.x, (P256.P - wN.y).mod(P256.P))
             val kPoint = P256.mul(x, P256.add(yMsg, wNneg))
             val kBytes = P256.encodeUncompressed(kPoint)
@@ -110,13 +110,12 @@ object AdbSpake2Pairing {
 
             // ── Step 7: encrypt our RSA public key and send ───────────────────────
             val encrypted = aesGcmEncrypt(sharedKey, ByteArray(12), rsaPubKeyPayload)
-            sendFrame(out, encrypted)
+            sendFrame(out, TYPE_CERTIFICATE, encrypted)
             log("sent encrypted pubkey (${encrypted.size} bytes)")
 
             // ── Step 8: receive device's encrypted payload ────────────────────────
-            val devEncrypted = recvFrameDynamic(inp)
+            val (_, devEncrypted) = recvFrame(inp)
             log("received device payload (${devEncrypted.size} bytes)")
-            // If we can decrypt without error → success
             aesGcmDecrypt(sharedKey, ByteArray(12).also { it[11] = 1 }, devEncrypted)
             log("pairing SUCCESS")
 
@@ -147,31 +146,31 @@ object AdbSpake2Pairing {
         return k
     }
 
-    private fun sendFrame(out: OutputStream, data: ByteArray) {
-        val lenBuf = ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putInt(data.size).array()
-        out.write(lenBuf)
-        out.write(data)
+    // ADB pairing packet header: 1 byte version + 1 byte type + 4 bytes payload size (BE)
+    private const val HEADER_VERSION: Byte = 1
+    private const val TYPE_SPAKE2_MSG: Byte = 0
+    private const val TYPE_CERTIFICATE: Byte = 1
+
+    private fun sendFrame(out: OutputStream, type: Byte, data: ByteArray) {
+        val buf = ByteBuffer.allocate(6 + data.size)
+            .put(HEADER_VERSION)
+            .put(type)
+            .order(ByteOrder.BIG_ENDIAN)
+            .putInt(data.size)
+            .put(data)
+        out.write(buf.array())
         out.flush()
     }
 
-    private fun recvFrame(inp: InputStream, expectedLen: Int): ByteArray {
-        val lenBuf = ByteArray(4)
-        inp.readFully(lenBuf)
-        val len = ByteBuffer.wrap(lenBuf).order(ByteOrder.BIG_ENDIAN).int
-        require(len == expectedLen) { "Expected $expectedLen bytes, got $len" }
-        val buf = ByteArray(len)
-        inp.readFully(buf)
-        return buf
-    }
-
-    private fun recvFrameDynamic(inp: InputStream): ByteArray {
-        val lenBuf = ByteArray(4)
-        inp.readFully(lenBuf)
-        val len = ByteBuffer.wrap(lenBuf).order(ByteOrder.BIG_ENDIAN).int
-        require(len in 1..65536) { "Unexpected frame length $len" }
-        val buf = ByteArray(len)
-        inp.readFully(buf)
-        return buf
+    private fun recvFrame(inp: InputStream): Pair<Byte, ByteArray> {
+        val header = ByteArray(6)
+        inp.readFully(header)
+        val type = header[1]
+        val len = ByteBuffer.wrap(header, 2, 4).order(ByteOrder.BIG_ENDIAN).int
+        require(len in 0..65536) { "Unexpected frame length $len" }
+        val payload = ByteArray(len)
+        inp.readFully(payload)
+        return Pair(type, payload)
     }
 
     private fun InputStream.readFully(buf: ByteArray) {
