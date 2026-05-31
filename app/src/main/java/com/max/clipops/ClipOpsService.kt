@@ -116,8 +116,27 @@ class ClipOpsService : Service() {
         return b.build()
     }
 
-    private fun push() = getSystemService(NotificationManager::class.java)
-        .notify(NOTIF_ID, buildNotification())
+    private fun push() {
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(NOTIF_ID, buildNotification())
+
+        // When pairing is found: post a SEPARATE non-ongoing heads-up notification
+        // (foreground/ongoing notifications are suppressed from heads-up by the OS)
+        if (state == State.FOUND) {
+            val headsUp = NotificationCompat.Builder(this, CHANNEL_ALERT_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("Pairing service found")
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .addAction(0, "Enter pairing code", pb(ACTION_ENTER_CODE, 44))
+                .addAction(0, "Stop searching",     pb(ACTION_STOP_SEARCH, 22))
+                .build()
+            nm.notify(NOTIF_ID + 1, headsUp)
+        } else {
+            // Cancel the alert notification if state changed away from FOUND
+            nm.cancel(NOTIF_ID + 1)
+        }
+    }
 
     // ── mDNS ────────────────────────────────────────────────────────────────
 
