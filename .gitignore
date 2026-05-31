@@ -1,0 +1,6 @@
+gradle-8.2/
+*.zip
+local.properties
+.gradle/
+build/
+app/build/
