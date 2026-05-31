@@ -131,8 +131,8 @@ class MainActivity : AppCompatActivity() {
                 var isAllowed = true
                 val lock = java.lang.Object()
                 
-                LocalAdbManager.getClipboardReadMode(appInfo.packageName) { mode ->
-                    isAllowed = (mode == 0 || mode == 3) // MODE_ALLOWED or MODE_DEFAULT
+                LocalAdbManager.getClipboardReadMode(appInfo.packageName) { allowed ->
+                    isAllowed = allowed
                     synchronized(lock) {
                         lock.notify()
                     }

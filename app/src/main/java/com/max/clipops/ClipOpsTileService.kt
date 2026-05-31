@@ -105,8 +105,8 @@ class ClipOpsTileService : TileService() {
             prefs.edit().putInt("pair_port", port).putString("pair_code", code).apply()
 
             LocalAdbManager.initKeys(this)
-            LocalAdbManager.pairAndConnect(this, port, code) { success, error ->
-                // TileService callbacks can come on any thread; post back
+            val connPort = prefs.getInt("conn_port", port)
+            LocalAdbManager.connect("127.0.0.1", connPort) { success, error ->
                 mainLooper.run {
                     btnPair.isEnabled = true
                     if (success) {
@@ -114,7 +114,7 @@ class ClipOpsTileService : TileService() {
                         dialog.dismiss()
                         Toast.makeText(this@ClipOpsTileService, "ClipOps connected!", Toast.LENGTH_SHORT).show()
                     } else {
-                        status.text = error ?: "Pairing failed"
+                        status.text = error ?: "Connection failed — tap Allow on device"
                     }
                 }
             }
