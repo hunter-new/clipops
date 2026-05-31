@@ -21,13 +21,22 @@ class SetupAdbActivity : AppCompatActivity() {
         LocalAdbManager.initKeys(this)
 
         // Pre-fill saved values so the user doesn't have to retype after switching apps
-        val savedPairPort = prefs.getInt("pair_port", 0)
+        val savedPairPort = intent.getIntExtra("discovered_pair_port",
+            prefs.getInt("pair_port", 0))
         val savedConnPort = prefs.getInt("conn_port", 0)
         val savedCode     = prefs.getString("pair_code", "") ?: ""
+
+        val autoDiscovered = intent.hasExtra("discovered_pair_port")
 
         if (savedPairPort > 0) binding.pairingPortEditText.setText(savedPairPort.toString())
         if (savedConnPort > 0) binding.portEditText.setText(savedConnPort.toString())
         if (savedCode.isNotEmpty()) binding.codeEditText.setText(savedCode)
+
+        // If port was auto-discovered, hide pairing port field and focus code field
+        if (autoDiscovered) {
+            binding.pairingPortEditText.isEnabled = false
+            binding.codeEditText.requestFocus()
+        }
 
         binding.btnDevSettings.setOnClickListener {
             try {
