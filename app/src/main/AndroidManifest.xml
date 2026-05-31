@@ -30,6 +30,12 @@
             android:label="Activate Wireless Connection"
             android:exported="false" />
 
+        <activity
+            android:name=".PairingCodeActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.Dialog"
+            android:launchMode="singleTop"/>
+
         <!-- Persistent notification service (like Shizuku) -->
         <service
             android:name=".ClipOpsService"

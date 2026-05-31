@@ -204,7 +204,7 @@ class ClipOpsService : Service() {
                 ACTION_STOP_SEARCH  -> stopSearch()
                 ACTION_ENTER_CODE   -> {
                     startActivity(
-                        Intent(this@ClipOpsService, SetupAdbActivity::class.java)
+                        Intent(this@ClipOpsService, PairingCodeActivity::class.java)
                             .putExtra("discovered_pair_port", discoveredPort)
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     )
