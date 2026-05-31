@@ -118,8 +118,6 @@ object LocalAdbManager {
         }
     }
 
-    fun isConnected(): Boolean = connection != null
-
     fun setClipboardReadMode(packageName: String, isAllowed: Boolean, onResult: (Boolean) -> Unit) {
         val op = if (isAllowed) "allow" else "ignore"
         runShellCommand("cmd appops set $packageName READ_CLIPBOARD $op") { success, _ ->
