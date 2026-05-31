@@ -115,14 +115,28 @@ object AdbSpake2Pairing {
             log("sharedKey derived: ${sharedKey.hex()}")
 
             // Step 7: send AES-GCM encrypted RSA pub key
-            val encrypted = aesGcmEncrypt(sharedKey, ByteArray(12), rsaPubKeyPayload)
+            val info = "pairing_connection\u0000".toByteArray(Charsets.UTF_8)
+        val derivedKeyMaterial = hkdfSHA256(sharedKey, null, info, 32)
+        val derivedKey = derivedKeyMaterial.sliceArray(0 until 16)
+        val derivedIv = derivedKeyMaterial.sliceArray(16 until 28)
+
+        val encrypted = aesGcmEncrypt(derivedKey, derivedIv, rsaPubKeyPayload)
             sendFrame(out, TYPE_CERTIFICATE, encrypted)
             log("sent encrypted pubkey (${encrypted.size} bytes)")
 
             // Step 8: receive device encrypted payload
             val (_, devEncrypted) = recvFrame(inp)
             log("received device payload (${devEncrypted.size} bytes)")
-            aesGcmDecrypt(sharedKey, ByteArray(12).also { it[11] = 1 }, devEncrypted)
+            val decryptedPayload = try {
+                val info = "pairing_connection\u0000".toByteArray(Charsets.UTF_8)
+                val derivedKeyMaterial = hkdfSHA256(sharedKey, null, info, 32)
+                val derivedKey = derivedKeyMaterial.sliceArray(0 until 16)
+                val derivedIv = derivedKeyMaterial.sliceArray(16 until 28)
+                aesGcmDecrypt(derivedKey, derivedIv, devEncrypted)
+            } catch (e: Exception) {
+                log("SPAKE2: aesGcmDecrypt with HKDF failed: ${e.message}. Trying legacy decryption with zeros...", e)
+                aesGcmDecrypt(sharedKey, ByteArray(12).also { it[11] = 1 }, devEncrypted)
+            }
             log("pairing SUCCESS")
 
             ""
@@ -182,6 +196,30 @@ object AdbSpake2Pairing {
 
     private fun intToLE(v: Int): ByteArray =
         ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).array()
+
+    private fun hkdfSHA256(ikm: ByteArray, salt: ByteArray?, info: ByteArray, outLen: Int): ByteArray {
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        val actualSalt = salt ?: ByteArray(32)
+        mac.init(javax.crypto.spec.SecretKeySpec(actualSalt, "HmacSHA256"))
+        val prk = mac.doFinal(ikm)
+        
+        mac.init(javax.crypto.spec.SecretKeySpec(prk, "HmacSHA256"))
+        val okm = ByteArray(outLen)
+        var t = ByteArray(0)
+        var offset = 0
+        var i = 1
+        while (offset < outLen) {
+            mac.update(t)
+            mac.update(info)
+            mac.update(i.toByte())
+            t = mac.doFinal()
+            val chunkLen = minOf(t.size, outLen - offset)
+            System.arraycopy(t, 0, okm, offset, chunkLen)
+            offset += chunkLen
+            i++
+        }
+        return okm
+    }
 
     private fun BigInteger.toByteArray32(): ByteArray {
         val raw = this.toByteArray()
