@@ -20,76 +20,76 @@ class SetupAdbActivity : AppCompatActivity() {
 
         LocalAdbManager.initKeys(this)
 
-        // Pre-fill saved values so the user doesn't have to retype after switching apps
-        val savedPairPort = intent.getIntExtra("discovered_pair_port",
+        // Pre-fill: prefer mDNS-discovered port from intent, else saved prefs
+        val autoDiscovered = intent.hasExtra("discovered_pair_port")
+        val discoveredPairPort = intent.getIntExtra("discovered_pair_port",
             prefs.getInt("pair_port", 0))
         val savedConnPort = prefs.getInt("conn_port", 0)
-        val savedCode     = prefs.getString("pair_code", "") ?: ""
 
-        val autoDiscovered = intent.hasExtra("discovered_pair_port")
-
-        if (savedPairPort > 0) binding.pairingPortEditText.setText(savedPairPort.toString())
+        if (discoveredPairPort > 0) binding.pairingPortEditText.setText(discoveredPairPort.toString())
         if (savedConnPort > 0) binding.portEditText.setText(savedConnPort.toString())
-        if (savedCode.isNotEmpty()) binding.codeEditText.setText(savedCode)
 
-        // If port was auto-discovered, hide pairing port field and focus code field
+        // If port was auto-discovered: lock the field, focus code input
         if (autoDiscovered) {
             binding.pairingPortEditText.isEnabled = false
             binding.codeEditText.requestFocus()
         }
 
         binding.btnDevSettings.setOnClickListener {
+            // Save pairing port before leaving app so it's there when we come back
+            val pairPort = binding.pairingPortEditText.text.toString().trim().toIntOrNull()
+            if (pairPort != null) prefs.edit().putInt("pair_port", pairPort).apply()
             try {
                 startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
             } catch (e: Exception) {
-                startActivity(Intent(Settings.ACTION_SETTINGS))
-                Toast.makeText(this, "Enable 'Developer Options' manually", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Cannot open Developer Options", Toast.LENGTH_SHORT).show()
             }
         }
 
         binding.btnConnect.setOnClickListener {
-            val pairingPortStr = binding.pairingPortEditText.text.toString().trim()
-            val connPortStr    = binding.portEditText.text.toString().trim()
-            val code           = binding.codeEditText.text.toString().trim()
+            val pairPort = binding.pairingPortEditText.text.toString().trim().toIntOrNull()
+            val connPort = binding.portEditText.text.toString().trim().toIntOrNull()
+            val code     = binding.codeEditText.text.toString().trim()
 
-            val pairingPort = pairingPortStr.toIntOrNull()
-            if (pairingPort == null || pairingPort <= 0 || pairingPort > 65535) {
-                binding.pairingPortEditText.error = "Invalid pairing port"
+            if (pairPort == null || connPort == null || code.isEmpty()) {
+                Toast.makeText(this, "Please fill all fields", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
 
-            val connPort = connPortStr.toIntOrNull()
-            if (connPort == null || connPort <= 0 || connPort > 65535) {
-                binding.portEditText.error = "Invalid connection port"
-                return@setOnClickListener
-            }
-
-            if (code.length != 6) {
-                binding.codeEditText.error = "Must be 6 digits"
-                return@setOnClickListener
-            }
-
-            // Save so fields survive app-switch
+            // Save for next time
             prefs.edit()
-                .putInt("pair_port", pairingPort)
+                .putInt("pair_port", pairPort)
                 .putInt("conn_port", connPort)
                 .putString("pair_code", code)
                 .apply()
 
             binding.progressBar.visibility = View.VISIBLE
-            binding.statusText.text = "Connecting to localhost:$connPort…"
             binding.btnConnect.isEnabled = false
 
-            LocalAdbManager.pairAndConnect(this, pairingPort, code) { success, error ->
+            // Step 1: SPAKE2+ Pair
+            LocalAdbManager.pairDevice("127.0.0.1", pairPort, code) { paired, msg ->
                 runOnUiThread {
-                    binding.progressBar.visibility = View.GONE
-                    binding.btnConnect.isEnabled = true
-                    if (success) {
-                        Toast.makeText(this, "ClipOps connected!", Toast.LENGTH_LONG).show()
-                        setResult(RESULT_OK)
-                        finish()
-                    } else {
-                        binding.statusText.text = error ?: "Connection failed."
+                    if (!paired) {
+                        binding.progressBar.visibility = View.GONE
+                        binding.btnConnect.isEnabled = true
+                        Toast.makeText(this, "Pairing failed: $msg", Toast.LENGTH_LONG).show()
+                        return@runOnUiThread
+                    }
+                    Toast.makeText(this, "Paired! Connecting…", Toast.LENGTH_SHORT).show()
+                    // Step 2: Connect on the main ADB port
+                    LocalAdbManager.connect("127.0.0.1", connPort) { connected ->
+                        runOnUiThread {
+                            binding.progressBar.visibility = View.GONE
+                            binding.btnConnect.isEnabled = true
+                            if (connected) {
+                                setResult(RESULT_OK)
+                                finish()
+                            } else {
+                                Toast.makeText(this,
+                                    "Connected to ADB daemon — if toggling fails, try connecting again",
+                                    Toast.LENGTH_LONG).show()
+                            }
+                        }
                     }
                 }
             }

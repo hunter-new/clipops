@@ -1,78 +1,100 @@
 package com.max.clipops
 
 import android.content.Context
-import android.util.Base64
 import android.util.Log
+import com.android.adblib.AdbSession
+import com.android.adblib.AdbSessionHost
+import com.android.adblib.DeviceSelector
+import com.android.adblib.tools.AdbLibTools
+import com.android.adblib.tools.PairResult
 import com.cgutman.adblib.AdbBase64
 import com.cgutman.adblib.AdbConnection
 import com.cgutman.adblib.AdbCrypto
-import com.cgutman.adblib.AdbStream
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.io.File
-import java.net.ConnectException
 import java.net.Socket
+import java.security.KeyFactory
+import java.security.KeyPairGenerator
+import java.security.interfaces.RSAPublicKey
+import java.util.Base64
 
 object LocalAdbManager {
     private const val TAG = "LocalAdbManager"
-    private var connection: AdbConnection? = null
+    private const val PRIV_KEY = "adb_priv.key"
+    private const val PUB_KEY  = "adb_pub.key"
+
     private var crypto: AdbCrypto? = null
+    private var connection: AdbConnection? = null
 
-    // AdbBase64 implementation using Android's Base64
-    private val adbBase64 = AdbBase64 { bArr ->
-        Base64.encodeToString(bArr, Base64.NO_WRAP)
-    }
+    // ── Key management ───────────────────────────────────────────────────────
 
-    /**
-     * Initializes RSA keys for ADB authentication.
-     * Keys are stored in the app's private files directory so the user only
-     * needs to authorize once ("Always allow from this computer").
-     */
-    fun initKeys(context: Context) {
-        val privKeyFile = File(context.filesDir, "adb_priv.key")
-        val pubKeyFile  = File(context.filesDir, "adb_pub.key")
-
-        try {
-            crypto = if (privKeyFile.exists() && pubKeyFile.exists()) {
-                Log.d(TAG, "Loading existing ADB keys")
-                AdbCrypto.loadAdbKeyPair(adbBase64, privKeyFile, pubKeyFile)
+    fun initKeys(ctx: Context) {
+        val privFile = File(ctx.filesDir, PRIV_KEY)
+        val pubFile  = File(ctx.filesDir, PUB_KEY)
+        val base64 = AdbBase64 { data -> Base64.getEncoder().encodeToString(data) }
+        crypto = try {
+            if (privFile.exists() && pubFile.exists()) {
+                AdbCrypto.loadAdbKeyPair(base64, privFile, pubFile)
             } else {
-                Log.d(TAG, "Generating new ADB key pair")
-                val newCrypto = AdbCrypto.generateAdbKeyPair(adbBase64)
-                newCrypto.saveAdbKeyPair(privKeyFile, pubKeyFile)
-                newCrypto
+                AdbCrypto.generateAdbKeyPair(base64).also {
+                    it.saveAdbKeyPair(privFile, pubFile)
+                }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize ADB keys", e)
+            Log.e(TAG, "Key init failed", e)
+            null
         }
     }
 
-    fun isConnected(): Boolean = connection != null && crypto != null
+    // ── SPAKE2+ Pairing via JetBrains adblib ────────────────────────────────
 
-    /**
-     * Connect to the local ADB daemon on the given Wireless Debugging port.
-     */
-    fun connectLocal(port: Int, onResult: (Boolean, String?) -> Unit) {
-        val c = crypto
-        if (c == null) {
-            onResult(false, "Keys not initialized. Call initKeys() first.")
-            return
-        }
-
-        Thread {
+    fun pairDevice(
+        host: String,
+        pairPort: Int,
+        pairingCode: String,
+        onResult: (success: Boolean, message: String) -> Unit
+    ) {
+        CoroutineScope(Dispatchers.IO).launch {
             try {
-                val socket = Socket("127.0.0.1", port).apply { soTimeout = 5000 }
-                val conn = AdbConnection.create(socket, c)
+                val sessionHost = AdbSessionHost()
+                val session = AdbSession.create(sessionHost)
+                val tools = AdbLibTools(session)
+                val result = tools.pair(host, pairPort, pairingCode)
+                session.close()
+                when (result) {
+                    is PairResult.Success -> onResult(true, "Paired successfully")
+                    is PairResult.Failure -> onResult(false, "Pairing failed: ${result.message}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Pairing error", e)
+                onResult(false, e.message ?: "Unknown error")
+            }
+        }
+    }
+
+    // ── ADB Connect via vendored cgutman adblib ──────────────────────────────
+
+    fun connect(
+        host: String,
+        port: Int,
+        onResult: (success: Boolean) -> Unit
+    ) {
+        val keys = crypto ?: return onResult(false)
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                disconnect()
+                val socket = Socket(host, port)
+                val conn = AdbConnection.create(socket, keys)
                 conn.connect()
                 connection = conn
-                Log.d(TAG, "Connected to local ADB on port $port")
-                onResult(true, null)
-            } catch (e: ConnectException) {
-                Log.e(TAG, "Connection refused on port $port", e)
-                onResult(false, "Connection refused. Is Wireless Debugging active on port $port?")
+                onResult(true)
             } catch (e: Exception) {
-                Log.e(TAG, "ADB connection error", e)
-                onResult(false, e.localizedMessage ?: "Unknown connection error")
+                Log.e(TAG, "Connect error", e)
+                onResult(false)
             }
-        }.start()
+        }
     }
 
     fun disconnect() {
@@ -80,43 +102,9 @@ object LocalAdbManager {
         connection = null
     }
 
-    /**
-     * Run a shell command and return stdout.
-     */
-    fun runShellCommand(command: String, onResult: (Boolean, String) -> Unit) {
-        val conn = connection
-        if (conn == null) {
-            onResult(false, "Not connected. Please connect to local ADB first.")
-            return
-        }
+    fun isConnected(): Boolean = connection != null
 
-        Thread {
-            try {
-                val stream: AdbStream = conn.open("shell:$command")
-                val output = StringBuilder()
-                while (!stream.isClosed) {
-                    val data = stream.read()        // returns ByteArray, no args
-                    output.append(String(data))
-                }
-                onResult(true, output.toString().trim())
-            } catch (e: Exception) {
-                Log.e(TAG, "Shell command failed: $command", e)
-                onResult(false, e.localizedMessage ?: "Shell transaction failed")
-            }
-        }.start()
-    }
-
-    fun getClipboardReadMode(packageName: String, onResult: (Int) -> Unit) {
-        runShellCommand("cmd appops get $packageName READ_CLIPBOARD") { success, output ->
-            if (!success) { onResult(3); return@runShellCommand }
-            onResult(when {
-                output.contains("allow")  -> 0  // MODE_ALLOWED
-                output.contains("ignore") -> 1  // MODE_IGNORED
-                output.contains("deny")   -> 2  // MODE_ERRORED
-                else                      -> 3  // MODE_DEFAULT
-            })
-        }
-    }
+    // ── AppOps shell commands ────────────────────────────────────────────────
 
     fun setClipboardReadMode(packageName: String, isAllowed: Boolean, onResult: (Boolean) -> Unit) {
         val op = if (isAllowed) "allow" else "ignore"
@@ -125,53 +113,28 @@ object LocalAdbManager {
         }
     }
 
-    /**
-     * Pair & Connect entry point called by both the QS Tile and SetupAdbActivity.
-     *
-     * AdbLib (cgutman) does NOT implement Android 11's SPAKE2+ pairing protocol,
-     * so we cannot complete the cryptographic pairing handshake in-app.
-     *
-     * What we CAN do:
-     *  1. Attempt a direct connect on the saved connection port — succeeds if the
-     *     key was already trusted from a previous session.
-     *  2. If that fails, guide the user: they pair once via Wireless Debugging UI
-     *     (which stores our public key as trusted), then tap again → succeeds.
-     *
-     * The pairing port + code the user typed are saved in SharedPreferences so
-     * the fields are pre-filled next time (port changes every reboot, but code
-     * is only needed once per trust establishment).
-     */
-    fun pairAndConnect(
-        context: android.content.Context,
-        pairingPort: Int,
-        code: String,
-        onResult: (Boolean, String?) -> Unit
-    ) {
-        val prefs = context.getSharedPreferences("clipops", android.content.Context.MODE_PRIVATE)
-        // The ADB *connection* port is different from the *pairing* port.
-        // User must also save it; we try pairingPort as fallback for first attempt.
-        val connPort = prefs.getInt("conn_port", pairingPort)
+    fun getClipboardReadMode(packageName: String, onResult: (Boolean) -> Unit) {
+        runShellCommand("cmd appops get $packageName READ_CLIPBOARD") { success, output ->
+            onResult(success && output.contains("allow"))
+        }
+    }
 
-        Thread {
+    private fun runShellCommand(cmd: String, callback: (Boolean, String) -> Unit) {
+        val conn = connection ?: return callback(false, "Not connected")
+        CoroutineScope(Dispatchers.IO).launch {
             try {
-                val c = crypto ?: run { onResult(false, "Keys not initialised. Restart the app."); return@Thread }
-                val socket = java.net.Socket("127.0.0.1", connPort).apply { soTimeout = 6000 }
-                val conn = AdbConnection.create(socket, c)
-                conn.connect()
-                connection = conn
-                Log.d(TAG, "pairAndConnect: connected on port $connPort")
-                onResult(true, null)
+                val stream = conn.open("shell:$cmd")
+                val sb = StringBuilder()
+                while (true) {
+                    val data = stream.read() ?: break
+                    sb.append(String(data))
+                }
+                stream.close()
+                callback(true, sb.toString())
             } catch (e: Exception) {
-                Log.w(TAG, "pairAndConnect: connect failed, key not trusted yet", e)
-                onResult(
-                    false,
-                    "Key not yet trusted by device.\n\n" +
-                    "Go to: Developer Settings → Wireless Debugging → " +
-                    "'Pair device with pairing code'\n" +
-                    "Use Port: $pairingPort  Code: $code\n\n" +
-                    "Then tap 'Pair & Connect' again."
-                )
+                Log.e(TAG, "Shell error", e)
+                callback(false, e.message ?: "")
             }
-        }.start()
+        }
     }
 }
