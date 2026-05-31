@@ -9,6 +9,13 @@ import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import android.widget.LinearLayout
 import android.view.inputmethod.EditorInfo
+import com.cgutman.adblib.AdbBase64
+import com.cgutman.adblib.AdbCrypto
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.io.File
+import java.util.Base64
 
 class PairingCodeActivity : Activity() {
 
@@ -20,7 +27,6 @@ class PairingCodeActivity : Activity() {
 
         ClipOpsLogger.log(this, "PairingCodeActivity: opened with host=$host port=$port")
 
-        // Build inline input layout
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             val pad = (24 * resources.displayMetrics.density).toInt()
@@ -51,7 +57,8 @@ class PairingCodeActivity : Activity() {
                 val code = parts.getOrNull(0) ?: ""
                 val inputPort = parts.getOrNull(1)?.toIntOrNull() ?: 0
                 val resolvedPort = if (inputPort > 0) inputPort else port
-                if (code.length != 6) {
+
+                if (code.length != 6 || !code.all { it.isDigit() }) {
                     Toast.makeText(this, "Code must be 6 digits", Toast.LENGTH_SHORT).show()
                     finish()
                     return@setPositiveButton
@@ -61,15 +68,56 @@ class PairingCodeActivity : Activity() {
                     finish()
                     return@setPositiveButton
                 }
-                ClipOpsLogger.log(this, "PairingCodeActivity: connecting host=$host port=$resolvedPort code=$code")
-                LocalAdbManager.initKeys(this)
-                LocalAdbManager.connect(host, resolvedPort) { success, msg ->
-                    ClipOpsLogger.log(this, "PairingCodeActivity: result success=$success msg=$msg")
-                    runOnUiThread {
-                        if (success) {
-                            Toast.makeText(this, "Connected!", Toast.LENGTH_SHORT).show()
+
+                ClipOpsLogger.log(this, "PairingCodeActivity: starting SPAKE2 pairing host=$host port=$resolvedPort")
+                Toast.makeText(this, "Pairing…", Toast.LENGTH_SHORT).show()
+
+                val ctx = this
+                CoroutineScope(Dispatchers.IO).launch {
+                    // Load / generate RSA key pair
+                    val privFile = File(ctx.filesDir, "adb_priv.key")
+                    val pubFile  = File(ctx.filesDir, "adb_pub.key")
+                    val base64   = AdbBase64 { data -> Base64.getEncoder().encodeToString(data) }
+                    val crypto   = try {
+                        if (privFile.exists() && pubFile.exists()) {
+                            AdbCrypto.loadAdbKeyPair(base64, privFile, pubFile)
                         } else {
-                            Toast.makeText(this, "Failed: $msg", Toast.LENGTH_LONG).show()
+                            AdbCrypto.generateAdbKeyPair(base64).also {
+                                it.saveAdbKeyPair(privFile, pubFile)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        ClipOpsLogger.log(ctx, "key init failed: ${e.message}", "E")
+                        runOnUiThread {
+                            Toast.makeText(ctx, "Key error: ${e.message}", Toast.LENGTH_LONG).show()
+                            finish()
+                        }
+                        return@launch
+                    }
+
+                    val pubKeyPayload = try {
+                        crypto.adbPublicKeyPayload
+                    } catch (e: Exception) {
+                        ClipOpsLogger.log(ctx, "pubkey encode failed: ${e.message}", "E")
+                        runOnUiThread {
+                            Toast.makeText(ctx, "Key encode error: ${e.message}", Toast.LENGTH_LONG).show()
+                            finish()
+                        }
+                        return@launch
+                    }
+
+                    val errMsg = AdbSpake2Pairing.pair(
+                        host         = host,
+                        port         = resolvedPort,
+                        pairingCode  = code,
+                        rsaPubKeyPayload = pubKeyPayload
+                    ) { msg -> ClipOpsLogger.log(ctx, "SPAKE2: $msg") }
+
+                    runOnUiThread {
+                        if (errMsg.isEmpty()) {
+                            Toast.makeText(ctx, "Paired! Now search to connect.", Toast.LENGTH_LONG).show()
+                        } else {
+                            Toast.makeText(ctx, "Pairing failed: $errMsg", Toast.LENGTH_LONG).show()
                         }
                         finish()
                     }
