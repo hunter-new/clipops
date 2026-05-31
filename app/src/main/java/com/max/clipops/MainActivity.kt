@@ -39,18 +39,27 @@ class MainActivity : AppCompatActivity() {
         setupRecyclerView()
         setupSearch()
 
-        binding.statusBanner.setOnClickListener {
-            setupAdbLauncher.launch(Intent(this, SetupAdbActivity::class.java))
-        }
-
         LocalAdbManager.initKeys(this)
 
-        // Start persistent notification service (like Shizuku)
+        // Start persistent notification service
         val svcIntent = Intent(this, ClipOpsService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(svcIntent)
         } else {
             startService(svcIntent)
+        }
+
+        // Pairing button → trigger mDNS search via service broadcast
+        binding.btnPairing.setOnClickListener {
+            sendBroadcast(
+                Intent(ClipOpsService.ACTION_START_SEARCH).setPackage(packageName)
+            )
+            Toast.makeText(this, "Searching for pairing service…", Toast.LENGTH_SHORT).show()
+        }
+
+        // Start button → open setup screen to enter port & connect
+        binding.btnStart.setOnClickListener {
+            setupAdbLauncher.launch(Intent(this, SetupAdbActivity::class.java))
         }
 
         updateUIState()
@@ -66,10 +75,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateUIState() {
         if (LocalAdbManager.isConnected()) {
-            binding.statusBanner.visibility = View.GONE
+            binding.statusIcon.text = "✓"
+            binding.statusBanner.text = "ClipOps is running"
+            binding.btnPairing.visibility = View.GONE
+            binding.btnStart.text = "Stop"
+            binding.searchEditText.visibility = View.VISIBLE
         } else {
-            binding.statusBanner.text = "Local ADB is inactive. Tap here to setup wireless connection."
-            binding.statusBanner.visibility = View.VISIBLE
+            binding.statusIcon.text = "⚠"
+            binding.statusBanner.text = "ClipOps is not running"
+            binding.btnPairing.visibility = View.VISIBLE
+            binding.btnStart.text = "Start"
+            binding.searchEditText.visibility = View.GONE
         }
     }
 
