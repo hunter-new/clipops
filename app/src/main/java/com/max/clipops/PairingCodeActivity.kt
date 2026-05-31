@@ -25,10 +25,11 @@ class PairingCodeActivity : Activity() {
         }
 
         val til = TextInputLayout(this).apply {
-            hint = "6-digit pairing code"
+            hint = "code port  (e.g. 123456 40983)"
         }
         val input = TextInputEditText(this).apply {
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                        android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             imeOptions = EditorInfo.IME_ACTION_DONE
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -40,17 +41,25 @@ class PairingCodeActivity : Activity() {
 
         AlertDialog.Builder(this)
             .setTitle("Enter pairing code")
-            .setMessage("Type the 6-digit code shown on the Wireless Debugging screen.")
+            .setMessage("Type the 6-digit code and port shown on the Wireless Debugging screen, separated by a space.")
             .setView(container)
             .setPositiveButton("Pair") { _, _ ->
-                val code = input.text.toString().trim()
+                val parts = input.text.toString().trim().split("\\s+".toRegex())
+                val code = parts.getOrNull(0) ?: ""
+                val inputPort = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                val resolvedPort = if (inputPort > 0) inputPort else port
                 if (code.length != 6) {
                     Toast.makeText(this, "Code must be 6 digits", Toast.LENGTH_SHORT).show()
                     finish()
                     return@setPositiveButton
                 }
+                if (resolvedPort <= 0) {
+                    Toast.makeText(this, "Please enter a valid port", Toast.LENGTH_SHORT).show()
+                    finish()
+                    return@setPositiveButton
+                }
                 LocalAdbManager.initKeys(this)
-                LocalAdbManager.connect("127.0.0.1", port) { success, msg ->
+                LocalAdbManager.connect("127.0.0.1", resolvedPort) { success, msg ->
                     runOnUiThread {
                         if (success) {
                             Toast.makeText(this, "Connected!", Toast.LENGTH_SHORT).show()
