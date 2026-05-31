@@ -1,8 +1,12 @@
 package com.max.clipops
 
 import java.math.BigInteger
+import java.security.KeyPairGenerator
+import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.Date
+import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
 import java.security.cert.X509Certificate
@@ -10,6 +14,9 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import javax.security.auth.x500.X500Principal
 
 /**
  * ADB SPAKE2+ pairing over TLS implementation.
@@ -212,14 +219,49 @@ object AdbSpake2Pairing {
         return c.doFinal(cipher)
     }
 
-    private fun buildTrustAllSslContext(): SSLContext {
+    private const val KEYSTORE_ALIAS = "clipops_adb_tls"
+
+    /**
+     * Build an SSLContext that:
+     *  - presents a self-signed EC client certificate (required by ADB mTLS)
+     *  - trusts all server certificates (device uses self-signed too)
+     */
+    private fun buildMtlsSslContext(): SSLContext {
+        // 1. Get or create key in Android Keystore
+        val ks = KeyStore.getInstance("AndroidKeyStore").also { it.load(null) }
+        if (!ks.containsAlias(KEYSTORE_ALIAS)) {
+            val kpg = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
+            kpg.initialize(
+                KeyGenParameterSpec.Builder(
+                    KEYSTORE_ALIAS,
+                    KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
+                )
+                    .setAlgorithmParameterSpec(java.security.spec.ECGenParameterSpec("secp256r1"))
+                    .setDigests(KeyProperties.DIGEST_SHA256)
+                    .setCertificateSubject(X500Principal("CN=clipops-adb"))
+                    .setCertificateSerialNumber(BigInteger.ONE)
+                    .setCertificateNotBefore(Date(0))
+                    .setCertificateNotAfter(Date(Long.MAX_VALUE / 2))
+                    .build()
+            )
+            kpg.generateKeyPair()
+        }
+
+        // 2. Build KeyManager from the AndroidKeyStore entry
+        val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
+        kmf.init(ks, null)  // AndroidKeyStore doesn't need a password
+
+        // 3. Trust-all TrustManager (device cert is also self-signed)
         val trustAll = arrayOf<X509TrustManager>(object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
             override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
         })
+
         val ctx = SSLContext.getInstance("TLS")
-        ctx.init(null, trustAll, random)
+        ctx.init(kmf.keyManagers, trustAll, random)
         return ctx
     }
+
+    private fun buildTrustAllSslContext(): SSLContext = buildMtlsSslContext()
 }
