@@ -56,7 +56,11 @@ object AdbSpake2Pairing {
     ): String {
         return try {
             val sslCtx = buildTrustAllSslContext()
-            val sock = sslCtx.socketFactory.createSocket(host, port)
+            // Plain socket first with connect timeout, then layer TLS on top
+            val plainSock = java.net.Socket()
+            plainSock.connect(java.net.InetSocketAddress(host, port), 10_000)
+            plainSock.soTimeout = 15_000   // read timeout for all subsequent ops
+            val sock = sslCtx.socketFactory.createSocket(plainSock, host, port, true)
             val tlsSock = sock as javax.net.ssl.SSLSocket
             tlsSock.startHandshake()
             log("TLS handshake done")

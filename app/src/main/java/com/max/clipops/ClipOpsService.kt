@@ -241,6 +241,7 @@ class ClipOpsService : Service() {
                             .setContentText("Running SPAKE2+ handshake on $discoveredHost:$resolvedPort")
                             .setProgress(0, 0, true)
                             .setOngoing(true)
+                            .setTimeoutAfter(20_000)
                             .build()
                     )
 
