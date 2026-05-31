@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Permissions needed -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <uses-permission android:name="android.permission.INTERNET" /> <!-- Loopback connection needs internet permission -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Needed to draw the pairing dialog from QS Tile (overlay on lock screen) -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:allowBackup="true"
@@ -26,6 +27,19 @@
             android:name=".SetupAdbActivity"
             android:label="Activate Wireless Connection"
             android:exported="false" />
+
+        <!-- Quick Settings Tile -->
+        <service
+            android:name=".ClipOpsTileService"
+            android:exported="true"
+            android:label="ClipOps"
+            android:icon="@mipmap/ic_launcher"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
     </application>
 
 </manifest>

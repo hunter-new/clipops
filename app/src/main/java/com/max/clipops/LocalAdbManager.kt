@@ -124,4 +124,54 @@ object LocalAdbManager {
             onResult(success)
         }
     }
+
+    /**
+     * Pair & Connect entry point called by both the QS Tile and SetupAdbActivity.
+     *
+     * AdbLib (cgutman) does NOT implement Android 11's SPAKE2+ pairing protocol,
+     * so we cannot complete the cryptographic pairing handshake in-app.
+     *
+     * What we CAN do:
+     *  1. Attempt a direct connect on the saved connection port — succeeds if the
+     *     key was already trusted from a previous session.
+     *  2. If that fails, guide the user: they pair once via Wireless Debugging UI
+     *     (which stores our public key as trusted), then tap again → succeeds.
+     *
+     * The pairing port + code the user typed are saved in SharedPreferences so
+     * the fields are pre-filled next time (port changes every reboot, but code
+     * is only needed once per trust establishment).
+     */
+    fun pairAndConnect(
+        context: android.content.Context,
+        pairingPort: Int,
+        code: String,
+        onResult: (Boolean, String?) -> Unit
+    ) {
+        val prefs = context.getSharedPreferences("clipops", android.content.Context.MODE_PRIVATE)
+        // The ADB *connection* port is different from the *pairing* port.
+        // User must also save it; we try pairingPort as fallback for first attempt.
+        val connPort = prefs.getInt("conn_port", pairingPort)
+
+        Thread {
+            try {
+                val c = crypto ?: run { onResult(false, "Keys not initialised. Restart the app."); return@Thread }
+                val socket = java.net.Socket("127.0.0.1", connPort).apply { soTimeout = 6000 }
+                val conn = AdbConnection.create(socket, c)
+                conn.connect()
+                connection = conn
+                Log.d(TAG, "pairAndConnect: connected on port $connPort")
+                onResult(true, null)
+            } catch (e: Exception) {
+                Log.w(TAG, "pairAndConnect: connect failed, key not trusted yet", e)
+                onResult(
+                    false,
+                    "Key not yet trusted by device.\n\n" +
+                    "Go to: Developer Settings → Wireless Debugging → " +
+                    "'Pair device with pairing code'\n" +
+                    "Use Port: $pairingPort  Code: $code\n\n" +
+                    "Then tap 'Pair & Connect' again."
+                )
+            }
+        }.start()
+    }
 }

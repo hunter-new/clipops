@@ -1,90 +1,115 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="20dp"
-    android:gravity="center_horizontal">
+    android:layout_height="match_parent">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Wireless ADB Activation"
-        android:textSize="22sp"
-        android:textStyle="bold"
-        android:textColor="@color/black"
-        android:layout_marginTop="20dp"
-        android:layout_marginBottom="16dp"/>
-
-    <TextView
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="To manage clipboard operations, we connect locally using Android Wireless Debugging. Follow these steps to activate:"
-        android:textSize="14sp"
-        android:textColor="#333333"
-        android:layout_marginBottom="20dp"/>
+        android:orientation="vertical"
+        android:padding="20dp"
+        android:gravity="center_horizontal">
 
-    <!-- Dynamic Instruction Steps -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="1. Go to developer settings and enable 'Wireless Debugging'.\n2. Tap 'Wireless Debugging' -> 'Pair device with pairing code'.\n3. Note down the Port (e.g. 39185) and the 6-digit pairing code."
-        android:textSize="13sp"
-        android:lineSpacingExtra="4dp"
-        android:textColor="#555555"
-        android:layout_marginBottom="24dp"
-        android:background="#F5F5F5"
-        android:padding="12dp"/>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Wireless ADB Activation"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="16dp"/>
 
-    <!-- Port Input -->
-    <com.google.android.material.textfield.TextInputLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="Wireless Port (e.g., 39423)"
-        android:layout_marginBottom="12dp"
-        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
-
-        <com.google.android.material.textfield.TextInputEditText
-            android:id="@+id/portEditText"
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:inputType="number" />
-    </com.google.android.material.textfield.TextInputLayout>
+            android:text="Steps:\n1. Developer Settings → enable 'Wireless Debugging'\n2. Note the Connection Port shown on main screen\n3. Tap 'Pair device with pairing code' → note Pairing Port + 6-digit Code\n4. Fill all three fields below and tap Connect"
+            android:textSize="13sp"
+            android:textColor="#555555"
+            android:lineSpacingExtra="4dp"
+            android:background="#F5F5F5"
+            android:padding="12dp"
+            android:layout_marginBottom="24dp"/>
 
-    <!-- Connect / Activate Button -->
-    <Button
-        android:id="@+id/btnConnect"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:text="Connect Local ADB"
-        android:layout_marginTop="12dp"
-        android:layout_marginBottom="12dp"
-        app:cornerRadius="8dp" />
+        <!-- Pairing Port -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Pairing Port (from 'Pair with code' popup)"
+            android:layout_marginBottom="12dp"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
 
-    <Button
-        android:id="@+id/btnDevSettings"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Open Developer Settings"
-        android:backgroundTint="#757575"
-        style="@style/Widget.MaterialComponents.Button.TextButton"/>
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/pairingPortEditText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number" />
+        </com.google.android.material.textfield.TextInputLayout>
 
-    <ProgressBar
-        android:id="@+id/progressBar"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:visibility="gone" />
+        <!-- 6-digit Pairing Code -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="6-digit Pairing Code"
+            android:layout_marginBottom="12dp"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
 
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:textColor="#C62828"
-        android:textStyle="bold"
-        android:layout_marginTop="12dp"
-        android:textSize="14sp"
-        android:gravity="center" />
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/codeEditText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:maxLength="6" />
+        </com.google.android.material.textfield.TextInputLayout>
 
-</LinearLayout>
+        <!-- ADB Connection Port -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Connection Port (shown on main Wireless Debugging screen)"
+            android:layout_marginBottom="12dp"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/portEditText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <Button
+            android:id="@+id/btnConnect"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="Pair &amp; Connect"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="12dp"
+            app:cornerRadius="8dp" />
+
+        <Button
+            android:id="@+id/btnDevSettings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Open Developer Settings"
+            android:backgroundTint="#757575"
+            style="@style/Widget.MaterialComponents.Button.TextButton"/>
+
+        <ProgressBar
+            android:id="@+id/progressBar"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#C62828"
+            android:textStyle="bold"
+            android:layout_marginTop="12dp"
+            android:textSize="13sp"
+            android:gravity="center" />
+
+    </LinearLayout>
+</ScrollView>
