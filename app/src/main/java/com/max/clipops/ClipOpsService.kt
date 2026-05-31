@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.RemoteInput
 
 class ClipOpsService : Service() {
 
@@ -23,7 +24,9 @@ class ClipOpsService : Service() {
         const val ACTION_START_SEARCH  = "com.max.clipops.ACTION_START_SEARCH"
         const val ACTION_STOP_SEARCH   = "com.max.clipops.ACTION_STOP_SEARCH"
         const val ACTION_ENTER_CODE    = "com.max.clipops.ACTION_ENTER_CODE"
+        const val ACTION_SUBMIT_CODE   = "com.max.clipops.ACTION_SUBMIT_CODE"
         const val ACTION_STOP_SERVICE  = "com.max.clipops.ACTION_STOP_SERVICE"
+        const val KEY_PAIRING_CODE     = "pairing_code"
         private const val TAG = "ClipOpsService"
         private const val PAIRING_SERVICE_TYPE = "_adb-tls-pairing._tcp."
         private const val SEARCH_TIMEOUT_MS = 2 * 60 * 1000L  // 2 minutes
@@ -123,17 +126,25 @@ class ClipOpsService : Service() {
         // When pairing is found: post a SEPARATE non-ongoing heads-up notification
         // (foreground/ongoing notifications are suppressed from heads-up by the OS)
         if (state == State.FOUND) {
+            val remoteInput = RemoteInput.Builder(KEY_PAIRING_CODE)
+                .setLabel("Pairing code")
+                .build()
+
+            val submitIntent = pb(ACTION_SUBMIT_CODE, 55)
+            val enterCodeAction = NotificationCompat.Action.Builder(
+                0, "Enter pairing code", submitIntent
+            ).addRemoteInput(remoteInput).build()
+
             val headsUp = NotificationCompat.Builder(this, CHANNEL_ALERT_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle("Pairing service found")
-                .setAutoCancel(true)
+                .setAutoCancel(false)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .addAction(0, "Enter pairing code", pb(ACTION_ENTER_CODE, 44))
-                .addAction(0, "Stop searching",     pb(ACTION_STOP_SEARCH, 22))
+                .addAction(enterCodeAction)
+                .addAction(0, "Stop searching", pb(ACTION_STOP_SEARCH, 22))
                 .build()
             nm.notify(NOTIF_ID + 1, headsUp)
         } else {
-            // Cancel the alert notification if state changed away from FOUND
             nm.cancel(NOTIF_ID + 1)
         }
     }
@@ -209,6 +220,37 @@ class ClipOpsService : Service() {
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     )
                 }
+                ACTION_SUBMIT_CODE  -> {
+                    val code = RemoteInput.getResultsFromIntent(intent)
+                        ?.getCharSequence(KEY_PAIRING_CODE)?.toString()?.trim() ?: return
+                    if (code.isEmpty()) return
+                    // Show "Connecting…" update on the notification
+                    getSystemService(NotificationManager::class.java).notify(NOTIF_ID + 1,
+                        NotificationCompat.Builder(this@ClipOpsService, CHANNEL_ALERT_ID)
+                            .setSmallIcon(android.R.drawable.ic_dialog_info)
+                            .setContentTitle("Connecting…")
+                            .setProgress(0, 0, true)
+                            .setOngoing(true)
+                            .build()
+                    )
+                    LocalAdbManager.initKeys(this@ClipOpsService)
+                    LocalAdbManager.connect("127.0.0.1", discoveredPort) { success, msg ->
+                        if (success) {
+                            state = State.CONNECTED
+                            push()
+                        } else {
+                            // Show error back in notification
+                            getSystemService(NotificationManager::class.java).notify(NOTIF_ID + 1,
+                                NotificationCompat.Builder(this@ClipOpsService, CHANNEL_ALERT_ID)
+                                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                                    .setContentTitle("Connection failed")
+                                    .setContentText(msg)
+                                    .setAutoCancel(true)
+                                    .build()
+                            )
+                        }
+                    }
+                }
                 ACTION_STOP_SERVICE -> stopSelf()
             }
         }
@@ -222,6 +264,7 @@ class ClipOpsService : Service() {
             addAction(ACTION_START_SEARCH)
             addAction(ACTION_STOP_SEARCH)
             addAction(ACTION_ENTER_CODE)
+            addAction(ACTION_SUBMIT_CODE)
             addAction(ACTION_STOP_SERVICE)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
