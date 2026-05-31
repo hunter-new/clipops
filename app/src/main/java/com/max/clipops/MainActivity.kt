@@ -40,6 +40,7 @@ class MainActivity : AppCompatActivity() {
         setupSearch()
 
         LocalAdbManager.initKeys(this)
+        ClipOpsLogger.init(this)
 
         // Start persistent notification service
         val svcIntent = Intent(this, ClipOpsService::class.java)
