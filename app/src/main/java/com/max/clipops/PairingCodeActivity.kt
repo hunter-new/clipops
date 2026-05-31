@@ -3,33 +3,38 @@ package com.max.clipops
 import android.app.Activity
 import android.os.Bundle
 import android.view.WindowManager
-import android.widget.Toast
+import android.widget.*
 import androidx.appcompat.app.AlertDialog
-import com.google.android.material.textfield.TextInputEditText
-import com.google.android.material.textfield.TextInputLayout
-import android.widget.LinearLayout
-import android.view.inputmethod.EditorInfo
 
 class PairingCodeActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val port = intent.getIntExtra("discovered_pair_port", 0)
+        val connPort = intent.getIntExtra("conn_port", 0)
 
-        // Build inline input layout
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             val pad = (24 * resources.displayMetrics.density).toInt()
             setPadding(pad, 0, pad, 0)
         }
 
-        val til = TextInputLayout(this).apply {
-            hint = "6-digit pairing code"
+        // Instruction
+        val instruction = TextView(this).apply {
+            text = "1. Open Settings → Developer Options → Wireless Debugging\n" +
+                   "2. Note the port shown (e.g. 192.168.4.x:XXXXX)\n" +
+                   "3. Enter that port below and tap Connect\n" +
+                   "4. ⚠️ Tap \"Always allow\" on the dialog that appears"
+            setPadding(0, 0, 0, (16 * resources.displayMetrics.density).toInt())
         }
-        val input = TextInputEditText(this).apply {
+        container.addView(instruction)
+
+        val til = com.google.android.material.textfield.TextInputLayout(this).apply {
+            hint = "Connection port (e.g. 38247)"
+        }
+        val input = com.google.android.material.textfield.TextInputEditText(this).apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            imeOptions = EditorInfo.IME_ACTION_DONE
+            if (connPort > 0) setText(connPort.toString())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -39,23 +44,26 @@ class PairingCodeActivity : Activity() {
         container.addView(til)
 
         AlertDialog.Builder(this)
-            .setTitle("Enter pairing code")
-            .setMessage("Type the 6-digit code shown on the Wireless Debugging screen.")
+            .setTitle("Connect to Wireless Debugging")
             .setView(container)
-            .setPositiveButton("Pair") { _, _ ->
-                val code = input.text.toString().trim()
-                if (code.length != 6) {
-                    Toast.makeText(this, "Code must be 6 digits", Toast.LENGTH_SHORT).show()
+            .setPositiveButton("Connect") { _, _ ->
+                val port = input.text.toString().trim().toIntOrNull()
+                if (port == null || port < 1024 || port > 65535) {
+                    Toast.makeText(this, "Enter a valid port number", Toast.LENGTH_SHORT).show()
                     finish()
                     return@setPositiveButton
                 }
+                Toast.makeText(this, "Connecting… tap 'Always Allow' if prompted!", Toast.LENGTH_LONG).show()
                 LocalAdbManager.initKeys(this)
                 LocalAdbManager.connect("127.0.0.1", port) { success, msg ->
                     runOnUiThread {
                         if (success) {
-                            Toast.makeText(this, "Connected!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this, "✓ Connected!", Toast.LENGTH_SHORT).show()
+                            // Notify service
+                            sendBroadcast(android.content.Intent(ClipOpsService.ACTION_CONNECTED)
+                                .setPackage(packageName))
                         } else {
-                            Toast.makeText(this, "Failed: $msg", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this, "Failed: $msg\n\nDid you tap Allow?", Toast.LENGTH_LONG).show()
                         }
                         finish()
                     }

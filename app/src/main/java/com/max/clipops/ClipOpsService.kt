@@ -26,6 +26,7 @@ class ClipOpsService : Service() {
         const val ACTION_ENTER_CODE    = "com.max.clipops.ACTION_ENTER_CODE"
         const val ACTION_SUBMIT_CODE   = "com.max.clipops.ACTION_SUBMIT_CODE"
         const val ACTION_STOP_SERVICE  = "com.max.clipops.ACTION_STOP_SERVICE"
+        const val ACTION_CONNECTED     = "com.max.clipops.ACTION_CONNECTED"
         const val KEY_PAIRING_CODE     = "pairing_code"
         private const val TAG = "ClipOpsService"
         private const val PAIRING_SERVICE_TYPE = "_adb-tls-pairing._tcp."
@@ -35,9 +36,11 @@ class ClipOpsService : Service() {
     enum class State { IDLE, SEARCHING, FOUND, CONNECTED }
 
     private var state = State.IDLE
-    private var discoveredPort = 0
+    private var discoveredPairPort = 0
+    private var discoveredConnPort = 0
     private var nsdManager: NsdManager? = null
-    private var discoveryListener: NsdManager.DiscoveryListener? = null
+    private var pairDiscoveryListener: NsdManager.DiscoveryListener? = null
+    private var connDiscoveryListener: NsdManager.DiscoveryListener? = null
     private val handler = Handler(Looper.getMainLooper())
     private val timeoutRunnable = Runnable {
         // On timeout, restart search automatically instead of stopping
@@ -112,16 +115,17 @@ class ClipOpsService : Service() {
                 b.addAction(0, "Stop searching", pb(ACTION_STOP_SEARCH, 2))
             }
             State.FOUND -> {
-                val remoteInput = RemoteInput.Builder(KEY_PAIRING_CODE)
-                    .setLabel("Pairing code")
-                    .build()
-                val enterCodeAction = NotificationCompat.Action.Builder(
-                    0, "Enter pairing code", pbMutable(ACTION_SUBMIT_CODE, 55)
-                ).addRemoteInput(remoteInput).build()
-
+                val openActivity = PendingIntent.getActivity(
+                    this,
+                    10,
+                    Intent(this, PairingCodeActivity::class.java)
+                        .putExtra("conn_port", discoveredConnPort)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
                 b.setContentTitle("Pairing service found")
-                b.setContentText(null)
-                b.addAction(enterCodeAction)
+                b.setContentText("Tap to connect")
+                b.addAction(0, "Connect", openActivity)
                 b.addAction(0, "Stop searching", pb(ACTION_STOP_SEARCH, 2))
             }
             State.CONNECTED -> {
@@ -157,10 +161,8 @@ class ClipOpsService : Service() {
 
         val nsd = getSystemService(NsdManager::class.java).also { nsdManager = it }
 
-        val listener = object : NsdManager.DiscoveryListener {
-            override fun onStartDiscoveryFailed(t: String, c: Int) {
-                handler.post { stopSearch() }
-            }
+        fun makeListener(isPair: Boolean) = object : NsdManager.DiscoveryListener {
+            override fun onStartDiscoveryFailed(t: String, c: Int) { handler.post { stopSearch() } }
             override fun onStopDiscoveryFailed(t: String, c: Int)  {}
             override fun onDiscoveryStarted(t: String)             {}
             override fun onDiscoveryStopped(t: String)             {}
@@ -168,32 +170,49 @@ class ClipOpsService : Service() {
             override fun onServiceFound(info: NsdServiceInfo) {
                 nsd.resolveService(info, object : NsdManager.ResolveListener {
                     override fun onResolveFailed(i: NsdServiceInfo, c: Int) {
-                        Log.w(TAG, "Resolve failed: $c")
+                        Log.w(TAG, "Resolve failed ($isPair): $c")
                     }
                     override fun onServiceResolved(resolved: NsdServiceInfo) {
                         handler.post {
-                            discoveredPort = resolved.port
-                            Log.d(TAG, "Pairing service found on port $discoveredPort")
-                            getSharedPreferences("clipops", MODE_PRIVATE)
-                                .edit().putInt("pair_port", discoveredPort).apply()
-                            handler.removeCallbacks(timeoutRunnable)
-                            stopDiscoveryOnly()
-                            state = State.FOUND
-                            push()
+                            if (isPair) {
+                                discoveredPairPort = resolved.port
+                                Log.d(TAG, "Pair port: $discoveredPairPort")
+                                getSharedPreferences("clipops", MODE_PRIVATE)
+                                    .edit().putInt("pair_port", discoveredPairPort).apply()
+                            } else {
+                                discoveredConnPort = resolved.port
+                                Log.d(TAG, "Conn port: $discoveredConnPort")
+                                getSharedPreferences("clipops", MODE_PRIVATE)
+                                    .edit().putInt("conn_port", discoveredConnPort).apply()
+                            }
+                            // Show FOUND as soon as we have the pair port
+                            if (discoveredPairPort > 0 && state == State.SEARCHING) {
+                                handler.removeCallbacks(timeoutRunnable)
+                                stopDiscoveryOnly()
+                                state = State.FOUND
+                                push()
+                            }
                         }
                     }
                 })
             }
         }
-        discoveryListener = listener
-        nsd.discoverServices(PAIRING_SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
+
+        pairDiscoveryListener = makeListener(true)
+        connDiscoveryListener = makeListener(false)
+        nsd.discoverServices("_adb-tls-pairing._tcp.", NsdManager.PROTOCOL_DNS_SD, pairDiscoveryListener!!)
+        nsd.discoverServices("_adb-tls-connect._tcp.", NsdManager.PROTOCOL_DNS_SD, connDiscoveryListener!!)
     }
 
     private fun stopDiscoveryOnly() {
-        discoveryListener?.let {
+        pairDiscoveryListener?.let {
             try { nsdManager?.stopServiceDiscovery(it) } catch (_: Exception) {}
         }
-        discoveryListener = null
+        pairDiscoveryListener = null
+        connDiscoveryListener?.let {
+            try { nsdManager?.stopServiceDiscovery(it) } catch (_: Exception) {}
+        }
+        connDiscoveryListener = null
     }
 
     private fun stopSearch() {
@@ -251,6 +270,7 @@ class ClipOpsService : Service() {
                     }
                 }
                 ACTION_STOP_SERVICE -> stopSelf()
+                ACTION_CONNECTED    -> { state = State.CONNECTED; push() }
             }
         }
     }
@@ -265,6 +285,7 @@ class ClipOpsService : Service() {
             addAction(ACTION_ENTER_CODE)
             addAction(ACTION_SUBMIT_CODE)
             addAction(ACTION_STOP_SERVICE)
+            addAction(ACTION_CONNECTED)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(receiver, filter, RECEIVER_NOT_EXPORTED)
