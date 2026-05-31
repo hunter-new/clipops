@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">ClipOps</string>
+    <string name="shizuku_not_installed">Shizuku is not installed. Please download and install Shizuku to use this app.</string>
+    <string name="shizuku_not_running">Shizuku is running but permission is not granted. Please request permission.</string>
+    <string name="search_hint">Search apps...</string>
+    <string name="allowed">Clipboard Access Allowed</string>
+    <string name="ignored">Clipboard Access Ignored/Blocked</string>
+</resources>
