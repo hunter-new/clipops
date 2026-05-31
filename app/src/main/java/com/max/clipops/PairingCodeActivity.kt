@@ -25,7 +25,7 @@ class PairingCodeActivity : Activity() {
         }
 
         val til = TextInputLayout(this).apply {
-            hint = "code port  (e.g. 123456 40983)"
+            hint = "Pairing code + port (e.g. 123456 40983)"
         }
         val input = TextInputEditText(this).apply {
             inputType = android.text.InputType.TYPE_CLASS_TEXT or
