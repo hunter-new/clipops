@@ -39,7 +39,14 @@ class ClipOpsService : Service() {
     private var nsdManager: NsdManager? = null
     private var discoveryListener: NsdManager.DiscoveryListener? = null
     private val handler = Handler(Looper.getMainLooper())
-    private val timeoutRunnable = Runnable { stopSearch() }
+    private val timeoutRunnable = Runnable {
+        // On timeout, restart search automatically instead of stopping
+        Log.d(TAG, "Search timed out, restarting…")
+        stopDiscoveryOnly()
+        if (state == State.SEARCHING) {
+            startSearch()  // restart
+        }
+    }
 
     // ── Channels ─────────────────────────────────────────────────────────────
 
@@ -152,7 +159,7 @@ class ClipOpsService : Service() {
     // ── mDNS ────────────────────────────────────────────────────────────────
 
     private fun startSearch() {
-        if (state == State.SEARCHING) return
+        stopDiscoveryOnly()  // always clean up before restarting
         state = State.SEARCHING
         push()
 
@@ -287,6 +294,14 @@ class ClipOpsService : Service() {
     fun onConnected() {
         state = State.CONNECTED
         push()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Handle start actions passed directly via intent (e.g. from MainActivity)
+        when (intent?.action) {
+            ACTION_START_SEARCH -> startSearch()
+        }
+        return START_STICKY  // restart if killed by OS
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
