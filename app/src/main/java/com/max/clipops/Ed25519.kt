@@ -24,7 +24,7 @@ object Ed25519 {
         val y2 = y * y mod P
         val x2 = (y2 - BigInteger.ONE) * (D * y2 + BigInteger.ONE).modInverse(P) mod P
         var x = x2.modPow((P + BigInteger.valueOf(3)) / BigInteger.valueOf(8), P)
-        if (x * x mod P != x2) x = x * BigInteger.TWO.modPow((P - BigInteger.ONE) / BigInteger.valueOf(4), P) mod P
+        if (x * x mod P != x2) x = x * BigInteger.valueOf(2).modPow((P - BigInteger.ONE) / BigInteger.valueOf(4), P) mod P
         if (x.testBit(0)) x = P - x
         fromAffine(x, y)
     }
@@ -110,7 +110,7 @@ object Ed25519 {
         if (x2 == BigInteger.ZERO) return fromAffine(BigInteger.ZERO, y)
         var x = x2.modPow((P + BigInteger.valueOf(3)) / BigInteger.valueOf(8), P)
         if (x * x mod P != x2) {
-            x = x * BigInteger.TWO.modPow((P - BigInteger.ONE) / BigInteger.valueOf(4), P) mod P
+            x = x * BigInteger.valueOf(2).modPow((P - BigInteger.ONE) / BigInteger.valueOf(4), P) mod P
         }
         if (x.testBit(0) != signX) x = P - x
         return fromAffine(x, y)
