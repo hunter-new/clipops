@@ -43,10 +43,10 @@ dependencies {
     implementation 'androidx.recyclerview:recyclerview:1.3.2'
 
     // AdbLib vendored directly (com.cgutman.adblib source in src/main/java)
-    // JetBrains adblib — full SPAKE2+ wireless pairing support (Android 11+)
-    implementation 'com.android.tools:adblib:31.9.1'
+    // ADB SPAKE2+ pairing (Android 11+ wireless pairing protocol)
+    implementation 'com.github.Sengab-platform:adb-pairing:1.0.0'
 
-    // Coroutines (required by adblib)
+    // Coroutines
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
 
     testImplementation 'junit:junit:4.13.2'

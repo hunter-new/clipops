@@ -2,22 +2,15 @@ package com.max.clipops
 
 import android.content.Context
 import android.util.Log
-import com.android.adblib.AdbSession
-import com.android.adblib.AdbSessionHost
-import com.android.adblib.DeviceSelector
-import com.android.adblib.tools.AdbLibTools
-import com.android.adblib.tools.PairResult
 import com.cgutman.adblib.AdbBase64
 import com.cgutman.adblib.AdbConnection
 import com.cgutman.adblib.AdbCrypto
+import com.sengab.adbpairing.AdbPairingClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
 import java.net.Socket
-import java.security.KeyFactory
-import java.security.KeyPairGenerator
-import java.security.interfaces.RSAPublicKey
 import java.util.Base64
 
 object LocalAdbManager {
@@ -58,15 +51,10 @@ object LocalAdbManager {
     ) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val sessionHost = AdbSessionHost()
-                val session = AdbSession.create(sessionHost)
-                val tools = AdbLibTools(session)
-                val result = tools.pair(host, pairPort, pairingCode)
-                session.close()
-                when (result) {
-                    is PairResult.Success -> onResult(true, "Paired successfully")
-                    is PairResult.Failure -> onResult(false, "Pairing failed: ${result.message}")
-                }
+                val client = AdbPairingClient(host, pairPort, pairingCode)
+                val success = client.pair()
+                if (success) onResult(true, "Paired successfully")
+                else onResult(false, "Pairing rejected by device")
             } catch (e: Exception) {
                 Log.e(TAG, "Pairing error", e)
                 onResult(false, e.message ?: "Unknown error")
