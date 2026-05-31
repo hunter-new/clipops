@@ -234,7 +234,7 @@ class ClipOpsService : Service() {
                 ACTION_ENTER_CODE   -> {
                     startActivity(
                         Intent(this@ClipOpsService, PairingCodeActivity::class.java)
-                            .putExtra("discovered_pair_port", discoveredPort)
+                            .putExtra("discovered_pair_port", discoveredPairPort)
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     )
                 }
@@ -252,7 +252,7 @@ class ClipOpsService : Service() {
                             .build()
                     )
                     LocalAdbManager.initKeys(this@ClipOpsService)
-                    LocalAdbManager.connect("127.0.0.1", discoveredPort) { success, msg ->
+                    LocalAdbManager.connect("127.0.0.1", discoveredConnPort) { success, msg ->
                         if (success) {
                             state = State.CONNECTED
                             push()
